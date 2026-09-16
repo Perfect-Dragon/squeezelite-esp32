@@ -168,10 +168,10 @@ CONFIG_RELEASE_API="https://api.github.com/repos/sle118/squeezelite-esp32/releas
 CONFIG_SQUEEZELITE_ESP32_RELEASE_URL="https://github.com/sle118/squeezelite-esp32/releases"
 CONFIG_PROJECT_NAME="Squeezelite-ESP32"
 CONFIG_FW_PLATFORM_NAME="ESP32"
-CONFIG_DAC_CONFIG=""
+CONFIG_DAC_CONFIG="model=I2S,bck=33,ws=26,do=25"
 CONFIG_SPDIF_CONFIG=""
-CONFIG_SPI_CONFIG=""
-CONFIG_DISPLAY_CONFIG=""
+CONFIG_SPI_CONFIG="data=22,clk=23,dc=18,host=1"
+CONFIG_DISPLAY_CONFIG="SPI,width=320,height=240,cs=21,reset=19,speed=16000000,driver=ST7789,rotate,HFlip"
 CONFIG_ETH_CONFIG=""
 CONFIG_DAC_CONTROLSET=""
 # end of Target
