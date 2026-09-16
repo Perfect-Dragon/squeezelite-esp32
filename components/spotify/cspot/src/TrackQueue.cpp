@@ -555,6 +555,14 @@ bool TrackQueue::skipTrack(SkipDirection dir, bool expectNotify) {
     }
   } else {
     if (currentTracks.size() > currentTracksIndex + 1) {
+
+      if (preloadedTracks.size() > 1 && preloadedTracks[1]) {
+        CSPOT_LOG(info, "NEXT requested: next track preload state=%d",
+                  static_cast<int>(preloadedTracks[1]->state));
+      } else {
+        CSPOT_LOG(info, "NEXT requested: next track is not in preload queue");
+      }
+
       preloadedTracks.pop_front();
 
       if (!queueNextTrack(preloadedTracks.size() + 1)) {

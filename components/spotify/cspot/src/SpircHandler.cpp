@@ -256,6 +256,7 @@ bool SpircHandler::skipSong(TrackQueue::SkipDirection dir) {
 }
 
 bool SpircHandler::nextSong() {
+  CSPOT_LOG(info, "NEXT command received");
   return skipSong(TrackQueue::SkipDirection::NEXT);
 }
 
