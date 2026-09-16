@@ -607,19 +607,54 @@ bool TrackQueue::updateTracks(uint32_t requestedPosition, bool initial) {
   currentTracks = playbackState->remoteTracks;
   currentTracksIndex = playbackState->innerFrame.state.playing_track_index;
 
-  if (initial) {
-    // Clear preloaded tracks
-    preloadedTracks.clear();
+if (initial) {
+  std::shared_ptr<QueuedTrack> reusableTrack = nullptr;
 
-    if (currentTracksIndex < currentTracks.size()) {
-      // Push a song on the preloaded queue
-      queueNextTrack(0, requestedPosition);
+  // Spotify sometimes sends a LOAD frame for a manual Next instead of
+  // MessageTypeNext. Before clearing the preload queue, check whether the
+  // requested track is already prepared.
+  if (currentTracksIndex >= 0 &&
+      currentTracksIndex < currentTracks.size()) {
+
+    const auto& requestedRef = currentTracks[currentTracksIndex];
+
+    for (auto& track : preloadedTracks) {
+      if (track &&
+          track->ref == requestedRef &&
+          track->state == QueuedTrack::State::READY &&
+          !track->loading) {
+        reusableTrack = track;
+        break;
+      }
     }
+  }
 
-    // We already updated track meta, mark it
-    notifyPending = true;
+  // The incoming LOAD defines the new queue, so discard the old queue.
+  // reusableTrack stays alive because we kept a shared_ptr to it.
+  preloadedTracks.clear();
 
-    playableSemaphore->give();
+  if (reusableTrack) {
+    reusableTrack->requestedPosition = requestedPosition;
+    preloadedTracks.push_back(reusableTrack);
+
+    CSPOT_LOG(info, "LOAD: reusing preloaded track %s",
+              reusableTrack->identifier.c_str());
+
+    // Begin preloading the track after the reused one.
+    if (preloadedTracks.size() < MAX_TRACKS_PRELOAD) {
+      queueNextTrack(1);
+    }
+  } else if (currentTracksIndex < currentTracks.size()) {
+    CSPOT_LOG(info, "LOAD: requested track not preloaded, loading normally");
+
+    // Original behaviour
+    queueNextTrack(0, requestedPosition);
+  }
+
+  // We already updated track meta, mark it
+  notifyPending = true;
+
+  playableSemaphore->give();
   } else if (preloadedTracks[0]->loading) {
     // try to not re-load track if we are still loading it
 
