@@ -496,26 +496,31 @@ bool output_volume_i2s(unsigned left, unsigned right) {
  * Write frames to the output buffer
  */
 static int _i2s_write_frames(frames_t out_frames, bool silence, s32_t gainL, s32_t gainR, u8_t flags,
-								s32_t cross_gain_in, s32_t cross_gain_out, ISAMPLE_T **cross_ptr) {
-	if (!silence) {
-		if (output.fade == FADE_ACTIVE && output.fade_dir == FADE_CROSS && *cross_ptr) {
-			_apply_cross(outputbuf, out_frames, cross_gain_in, cross_gain_out, cross_ptr);
-		}
-		
-		_apply_gain(outputbuf, out_frames, gainL, gainR, flags);
-		memcpy(obuf + oframes * BYTES_PER_FRAME, outputbuf->readp, out_frames * BYTES_PER_FRAME);
-	} else {
-		memcpy(obuf + oframes * BYTES_PER_FRAME, silencebuf, out_frames * BYTES_PER_FRAME);
-	}
+                             s32_t cross_gain_in, s32_t cross_gain_out, ISAMPLE_T **cross_ptr) {
 
-	// don't update visu if we don't have enough data in buffer (500 ms)
-	if (silence || _buf_used(outputbuf) >  BYTES_PER_FRAME * output.current_sample_rate / 2) {
-		output_visu_export(obuf + oframes * BYTES_PER_FRAME, out_frames, output.current_sample_rate, silence, (gainL + gainR) / 2);
-	}
-		
-	oframes += out_frames;
-	
-	return out_frames;
+    if (!silence) {
+        if (output.fade == FADE_ACTIVE && output.fade_dir == FADE_CROSS && *cross_ptr) {
+            _apply_cross(outputbuf,out_frames,cross_gain_in,cross_gain_out,cross_ptr);
+        }
+
+        /*
+         * Feed visualizer BEFORE volume gain is applied.
+         */
+        if (_buf_used(outputbuf) > BYTES_PER_FRAME * output.current_sample_rate / 2) {
+            output_visu_export(outputbuf->readp,out_frames,output.current_sample_rate,false,FIXED_ONE);
+        }
+
+        _apply_gain(outputbuf,out_frames,gainL,gainR,flags);
+        memcpy(obuf + oframes * BYTES_PER_FRAME,outputbuf->readp,out_frames * BYTES_PER_FRAME);
+
+    } else {
+        memcpy(obuf + oframes * BYTES_PER_FRAME,silencebuf,out_frames * BYTES_PER_FRAME);
+        output_visu_export(obuf + oframes * BYTES_PER_FRAME,out_frames,output.current_sample_rate,true,FIXED_ONE);
+    }
+
+    oframes += out_frames;
+
+    return out_frames;
 }
 
 /****************************************************************************************
