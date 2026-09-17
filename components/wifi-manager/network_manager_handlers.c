@@ -796,6 +796,7 @@ static state_machine_result_t WIFI_CONFIGURING_CONNECT_SUCCESS_STATE_exit_handle
  */
 static state_machine_result_t WIFI_CONNECTING_STATE_entry_handler(state_machine_t* const State_Machine) {
     network_t* const nm = (network_t *)State_Machine;
+    nm->retries = 0;
     network_handler_entry_print(State_Machine,true);
     network_start_stop_dhcp_client(nm->wifi_netif, true);
     network_connect_active_ssid(State_Machine);
@@ -810,30 +811,72 @@ static state_machine_result_t WIFI_CONNECTING_STATE_handler(state_machine_t* con
     HANDLE_GLOBAL_EVENT(State_Machine);
     state_machine_result_t result = EVENT_HANDLED;
     network_t* const nm = (network_t *)State_Machine;
-    network_handler_print(State_Machine,true);
+    network_handler_print(State_Machine, true);
     switch (State_Machine->Event) {
         case EN_CONNECTED:
-            // nothing to do here. Let's wait for IP address 
+            // Nothing to do here. Wait for IP address.
             break;
         case EN_TIMER:
-            // try connecting again.
-            // todo: implement multi-ap logic
-            ESP_LOGI(TAG, "Timer: %s ",STR_OR_ALT(nm->timer_tag,"Ethernet link not detected"));
-            network_connect_active_ssid(State_Machine);
+            ESP_LOGI(TAG, "Timer: %s",
+                     STR_OR_ALT(nm->timer_tag, "Wifi polling timeout"));
+
+            if (network_wifi_get_known_count() > 1) {
+
+                ESP_LOGI(TAG, "Trying another saved WiFi network");
+
+                if (network_wifi_connect_next_known() != ESP_OK) {
+                    network_connect_active_ssid(State_Machine);
+                }
+
+            } else {network_connect_active_ssid(State_Machine);}
+
+            network_set_timer(nm->sta_polling_min_ms, "Wifi polling timeout");
+            
             break;
         case EN_LOST_CONNECTION:
-            if(nm->event_parameters->disconnected_event->reason == WIFI_REASON_ASSOC_LEAVE || nm->event_parameters->disconnected_event->reason == WIFI_REASON_AUTH_EXPIRE || nm->event_parameters->disconnected_event->reason ==  WIFI_REASON_ASSOC_EXPIRE) {
-                ESP_LOGI(TAG,"Wifi was disconnected from previous access point. Waiting to connect.");
-            }
-            else if(nm->event_parameters->disconnected_event->reason != WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+
+            if (nm->event_parameters->disconnected_event->reason == WIFI_REASON_ASSOC_LEAVE ||
+                nm->event_parameters->disconnected_event->reason == WIFI_REASON_AUTH_EXPIRE ||
+                nm->event_parameters->disconnected_event->reason == WIFI_REASON_ASSOC_EXPIRE) {
+
+                ESP_LOGI(TAG, "Wifi was disconnected from previous access point. ""Waiting to connect.");
+
+            } else if (nm->event_parameters->disconnected_event->reason != WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+
                 network_status_update_ip_info(UPDATE_FAILED_ATTEMPT);
-                result = local_traverse_state(State_Machine, &Wifi_Configuring_State[WIFI_CONFIGURING_STATE],__FUNCTION__);
+
+                size_t known = network_wifi_get_known_count();
+
+                if (known > 1 && nm->retries < known - 1) {
+                    nm->retries++;
+
+                    ESP_LOGI(TAG,
+                        "Saved WiFi failed. "
+                        "Will try another network (%d/%d)",
+                        nm->retries, (int)known - 1);
+
+                    network_set_timer(nm->sta_polling_min_ms, "Trying next saved WiFi");
+
+                    result = EVENT_HANDLED;
+
+                } else {
+                    nm->retries = 0;
+
+                    ESP_LOGW(TAG, "All saved WiFi networks failed. " "Entering configuration AP mode");
+
+                    result = local_traverse_state(State_Machine, &Wifi_Configuring_State[WIFI_CONFIGURING_STATE],
+                        __FUNCTION__);
+                }
             }
+
             break;
+
         default:
             result = EVENT_UN_HANDLED;
+            break;
     }
-    network_handler_print(State_Machine,false);
+
+    network_handler_print(State_Machine, false);
     return result;
 }
 static state_machine_result_t WIFI_CONNECTING_STATE_exit_handler(state_machine_t* const State_Machine) {

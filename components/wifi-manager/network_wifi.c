@@ -32,7 +32,23 @@ const char network_wifi_nvs_namespace[] = "config";
 const char ap_list_nsv_namespace[] = "aplist";
 /* rrm ctx */
 //Roaming support - int rrm_ctx = 0;
+#define WIFI_AP_NVS_KEY_SIZE 16
 
+static void network_wifi_make_ap_key(const char *ssid,
+                                     char key[WIFI_AP_NVS_KEY_SIZE]) {
+    // 32-bit FNV-1a hash.
+    // Gives us a short deterministic NVS key regardless of SSID length.
+    uint32_t hash = 2166136261u;
+    const unsigned char *p = (const unsigned char *)ssid;
+
+    while (*p) {
+        hash ^= (uint32_t)*p++;
+        hash *= 16777619u;
+    }
+
+    snprintf(key, WIFI_AP_NVS_KEY_SIZE,
+             "ap_%08x", (unsigned int)hash);
+}
 uint16_t ap_num = 0;
 
 esp_netif_t* wifi_netif;
@@ -172,6 +188,7 @@ esp_err_t network_wifi_add_ap_copy(const known_access_point_t* known_ap) {
     memcpy(&item->bssid, known_ap->bssid, sizeof(item->bssid));
     item->primary = known_ap->primary;
     item->authmode = known_ap->authmode;
+    item->last_try = 0;
     item->phy_11b = known_ap->phy_11b;
     item->phy_11g = known_ap->phy_11g;
     item->phy_11n = known_ap->phy_11n;
@@ -209,6 +226,7 @@ esp_err_t network_wifi_add_ap_from_sta_copy(const wifi_sta_config_t* sta) {
     item->password = strdup_psram(password_string(sta));
     memcpy(&item->bssid, sta->bssid, sizeof(item->bssid));
     item->primary = sta->channel;
+    item->last_try = 0;
     const wifi_ap_record_t* seen = network_wifi_get_ssid_info(item->ssid);
     if (seen) {
         item->authmode = seen->authmode;
@@ -216,6 +234,7 @@ esp_err_t network_wifi_add_ap_from_sta_copy(const wifi_sta_config_t* sta) {
         item->phy_11g = seen->phy_11g;
         item->phy_11n = seen->phy_11n;
         item->phy_lr = seen->phy_lr;
+
     }
     err = network_wifi_add_ap(item);
     return err;
@@ -396,9 +415,31 @@ esp_err_t network_wifi_delete_ap(const char* key) {
         }
     }
     ESP_LOGD(TAG, "Removing network %s from the flash AP list", key);
-    esp_err = erase_nvs_for_partition(NVS_DEFAULT_PART_NAME, ap_list_nsv_namespace, it->ssid);
-    if (esp_err != ESP_OK) {
-        messaging_post_message(MESSAGING_ERROR, MESSAGING_CLASS_SYSTEM, "Deleting network entry %s error (%s). Error %s", key, ap_list_nsv_namespace, esp_err_to_name(esp_err));
+
+    char ap_key[WIFI_AP_NVS_KEY_SIZE];
+    network_wifi_make_ap_key(it->ssid, ap_key);
+
+    esp_err_t hash_err =
+        erase_nvs_for_partition(NVS_DEFAULT_PART_NAME, ap_list_nsv_namespace, ap_key);
+
+    /* Also clean up old raw-SSID entries if one exists. */
+    esp_err_t legacy_err = ESP_ERR_NVS_NOT_FOUND;
+
+    if (strlen(it->ssid) <= 15 && strcmp(it->ssid, ap_key) != 0) {
+
+        legacy_err = erase_nvs_for_partition(NVS_DEFAULT_PART_NAME, ap_list_nsv_namespace, it->ssid);
+    }
+
+    if (hash_err != ESP_OK && hash_err != ESP_ERR_NVS_NOT_FOUND) {
+
+        esp_err = hash_err;
+
+    } else if (legacy_err != ESP_OK && legacy_err != ESP_ERR_NVS_NOT_FOUND) {
+
+        esp_err = legacy_err;
+
+    } else {
+        esp_err = ESP_OK;
     }
     ESP_LOGD(TAG, "Removing network %s from the known AP list", key);
     network_wifi_remove_ap_entry(it->ssid);
@@ -443,28 +484,115 @@ esp_err_t network_wifi_store_ap_json(known_access_point_t* item) {
     esp_err_t err = ESP_OK;
     size_t size = 0;
     char* json_string = NULL;
+    char ap_key[WIFI_AP_NVS_KEY_SIZE];
+
     const wifi_sta_config_t* sta = network_wifi_get_active_config();
 
+    network_wifi_make_ap_key(item->ssid, ap_key);
+
     if ((err = network_wifi_alloc_ap_json(item, &json_string)) == ESP_OK) {
-        // get any existing entry from the nvs and compare
-        char* existing = get_nvs_value_alloc_for_partition(NVS_DEFAULT_PART_NAME, ap_list_nsv_namespace, NVS_TYPE_BLOB, item->ssid, &size);
-        if (!existing || strncmp(existing, json_string, strlen(json_string)) != 0) {
-            ESP_LOGI(TAG, "SSID %s was changed or is new. Committing to flash", item->ssid);
-            err = network_wifi_write_ap(item->ssid, json_string, 0);
-            if (sta && strlen(ssid_string(sta)) > 0 && strcmp(ssid_string(sta), item->ssid) == 0) {
-                ESP_LOGI(TAG, "Committing active access point");
-                err = network_wifi_write_nvs("ssid", ssid_string(sta), 0);
+
+        char* existing =
+            get_nvs_value_alloc_for_partition(
+                NVS_DEFAULT_PART_NAME,
+                ap_list_nsv_namespace,
+                NVS_TYPE_BLOB,
+                ap_key,
+                &size);
+
+        if (!existing ||
+            strcmp(existing, json_string) != 0) {
+
+            ESP_LOGI(TAG,
+                     "SSID %s was changed or is new. "
+                     "Committing with key %s",
+                     item->ssid, ap_key);
+
+            esp_err_t write_err =
+                network_wifi_write_ap(
+                    ap_key,
+                    json_string,
+                    0);
+
+            if (write_err != ESP_OK) {
+                err = write_err;
+            }
+        }
+
+        FREE_AND_NULL(existing);
+
+        /*
+         * Remove an old entry that used the raw SSID as its NVS key.
+         * Only try this when the SSID itself was short enough to have
+         * been a valid NVS key.
+         */
+        if (err == ESP_OK &&
+            strlen(item->ssid) <= 15 &&
+            strcmp(item->ssid, ap_key) != 0) {
+
+            size_t legacy_size = 0;
+
+            char* legacy =
+                get_nvs_value_alloc_for_partition(
+                    NVS_DEFAULT_PART_NAME,
+                    ap_list_nsv_namespace,
+                    NVS_TYPE_BLOB,
+                    item->ssid,
+                    &legacy_size);
+
+            if (legacy) {
+                ESP_LOGI(TAG,
+                         "Migrating legacy WiFi entry %s",
+                         item->ssid);
+
+                FREE_AND_NULL(legacy);
+
+                erase_nvs_for_partition(
+                    NVS_DEFAULT_PART_NAME,
+                    ap_list_nsv_namespace,
+                    item->ssid);
+            }
+        }
+
+        /*
+         * Always update the preferred/current network.
+         * Do this even if its aplist JSON already existed.
+         */
+        if (sta &&
+            strlen((char*)sta->ssid) > 0 &&
+            strcmp((char*)sta->ssid, item->ssid) == 0) {
+
+            ESP_LOGI(TAG,
+                     "Committing active access point");
+
+            esp_err_t active_err =
+                network_wifi_write_nvs(
+                    "ssid",
+                    (char*)sta->ssid,
+                    0);
+
+            if (active_err == ESP_OK) {
+                active_err =
+                    network_wifi_write_nvs(
+                        "password",
+                        (char*)sta->password,
+                        0);
+            }
+
+            if (active_err != ESP_OK) {
+                ESP_LOGE(TAG,
+                         "Error committing active access point: %s",
+                         esp_err_to_name(active_err));
+
                 if (err == ESP_OK) {
-                    err = network_wifi_write_nvs("password", STR_OR_BLANK(password_string(sta)), 0);
-                }
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "Error committing active access point : %s", esp_err_to_name(err));
+                    err = active_err;
                 }
             }
         }
-        FREE_AND_NULL(existing);
+
         FREE_AND_NULL(json_string);
     }
+
     return err;
 }
 
@@ -560,7 +688,8 @@ esp_err_t network_wifi_save_sta_config() {
     SLIST_FOREACH(it, &s_ap_list, next) {
         if ((esp_err = network_wifi_store_ap_json(it)) != ESP_OK) {
             ESP_LOGW(TAG, "Error saving wifi ap entry %s : %s", it->ssid, esp_err_to_name(esp_err));
-            break;
+            // break;
+            continue;
         }
     }
     return esp_err;
@@ -1169,6 +1298,43 @@ esp_err_t network_wifi_connect(const char* ssid, const char* password) {
     }
     return err;
 }
+
+static known_access_point_t* network_wifi_get_next_known_ap(void) {
+    known_access_point_t* it;
+    known_access_point_t* best = NULL;
+
+    /*
+     * Pick the network that was tried least recently.
+     * New/untried entries have last_try == 0, so they are preferred.
+     */
+    SLIST_FOREACH(it, &s_ap_list, next) {
+        if (!best || it->last_try < best->last_try) {
+            best = it;
+        }
+    }
+
+    return best;
+}
+
+esp_err_t network_wifi_connect_next_known(void) {
+    known_access_point_t* item =
+        network_wifi_get_next_known_ap();
+
+    if (!item) {
+        return ESP_FAIL;
+    }
+
+    item->last_try = (esp_timer_get_time() / 1000);
+
+    ESP_LOGI(TAG,
+             "Trying saved WiFi network %s",
+             item->ssid);
+
+    return network_wifi_connect(
+        item->ssid,
+        item->password);
+}
+
 esp_err_t network_wifi_connect_next_in_range(){
     const char * ssid = network_wifi_get_next_ap_in_range();
     if(ssid){
@@ -1186,10 +1352,21 @@ esp_err_t network_wifi_connect_ssid(const char* ssid) {
 }
 esp_err_t network_wifi_connect_active_ssid() {
     const wifi_sta_config_t* config = network_wifi_load_active_config();
-    if (config) {
-        return network_wifi_connect(ssid_string(config), password_string(config));
+
+    if (!config) {
+        return ESP_FAIL;
     }
-    return ESP_FAIL;
+
+    /*
+     * If the active network is in our saved AP list,
+     * go through network_wifi_connect_ssid so last_try
+     * is updated.
+     */
+    if (network_wifi_is_known_ap((char*)config->ssid)) {
+        return network_wifi_connect_ssid((char*)config->ssid);
+    }
+
+    return network_wifi_connect((char*)config->ssid, (char*)config->password);
 }
 void network_wifi_clear_config() {
     /* erase configuration */
