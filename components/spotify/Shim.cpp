@@ -32,7 +32,9 @@
 #include "platform_config.h"
 #include "nvs_utilities.h"
 #include "tools.h"
- 
+#include <exception>
+
+
 #if !defined(CLIENT_ID) || !defined(CLIENT_SECRET)
 #if __has_include("client_info.h")
 #include "client_info.h"
@@ -373,8 +375,21 @@ void cspotPlayer::runTask() {
         else if (bitrate == 96) ctx->config.audioFormat = AudioFormat_OGG_VORBIS_96;
         else ctx->config.audioFormat = AudioFormat_OGG_VORBIS_160;
 
-        ctx->session->connectWithRandomAp();
-        ctx->config.authData = ctx->session->authenticate(blob);
+        try {
+            ctx->session->connectWithRandomAp();
+            ctx->config.authData = ctx->session->authenticate(blob);
+        }
+        catch (const std::exception& e) {
+            CSPOT_LOG(error, "Spotify connection failed: %s", e.what());
+
+            ctx.reset();
+
+            // Don't hammer Spotify/Wi-Fi with immediate reconnect attempts
+            BELL_SLEEP_MS(2000);
+
+            continue;
+        }
+
         ctx->config.clientId = CLIENT_ID;
         ctx->config.clientSecret = CLIENT_SECRET;
 

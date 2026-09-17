@@ -442,12 +442,16 @@ void output_init_i2s(log_level level, char *device, unsigned output_buf_size, ch
 	adac->headset(jack_inserted_svc());	
     
     // do we want stats
-	p = config_alloc_get_default(NVS_TYPE_STR, "stats", "n", 0);
+/* 	p = config_alloc_get_default(NVS_TYPE_STR, "stats", "n", 0);
 	if (p && (*p == '1' || *p == 'Y' || *p == 'y')) {
         pseudo_idle_chain = pseudo_idle_svc;
         pseudo_idle_svc = i2s_stats;
     }
-    free(p);
+    free(p); */
+
+	// TEMP: force I2S statistics on without touching NVS
+	pseudo_idle_chain = pseudo_idle_svc;
+	pseudo_idle_svc = i2s_stats;
 
     // register a callback for inactivity
     i2s_idle_since = pdTICKS_TO_MS(xTaskGetTickCount());    

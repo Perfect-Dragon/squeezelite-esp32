@@ -1176,21 +1176,47 @@ void local_visualizer_start(void) {
     visu.mode = VISU_SPECTRUM | VISU_ESP32;
 
     // Full 320x240 display
-    visu.col = 0;
-    visu.row = 0;
-    visu.width = GDS_GetWidth(display);
-    visu.height = GDS_GetHeight(display);
+	visu.col = 0;
+	visu.width = GDS_GetWidth(display);
+
+	visu.height = GDS_GetHeight(display) / 2;
+	visu.row = GDS_GetHeight(display) - visu.height;
 
     // Basic layout for first test
     visu.border = 0;
     visu.rotate = false;
     visu.style = 0;
 
+	visu.bar_gap = 3;
+
     // Existing spectrum code expects this in the 0.0 - 0.5 range
     visu.spectrum_scale = 0.5f;
 
     // 20 spectrum bars
-    visu_fit(20, visu.width, visu.height);
+    visu_fit(16, visu.width, visu.height);
+	
+	static const int local_band_limits[16] = {
+		350,
+		700,
+		1050,
+		1400,
+		2100,
+		2800,
+		3500,
+		4500,
+		6000,
+		7500,
+		9000,
+		11000,
+		13000,
+		15000,
+		17500,
+		20000
+	};
+
+	for (int i = 0; i < visu.n; i++) {
+		visu.bars[i].limit = local_band_limits[i];
+	}
 
     // Reset bar state
     for (int i = 0; i < visu.n; i++) {
@@ -1199,7 +1225,11 @@ void local_visualizer_start(void) {
     }
 
     // Remove the existing "SqueezeESP32" screen
-    GDS_Clear(display, GDS_COLOR_BLACK);
+    GDS_ClearExt(display, false, true,
+             visu.col,
+             visu.row,
+             visu.col + visu.width - 1,
+             visu.row + visu.height - 1);
 
     // Tell display task to update immediately
     displayer.wake = 0;
@@ -1451,7 +1481,7 @@ static void displayer_task(void *args) {
 		// update visu if active
 		if ((visu.mode || led_visu.mode) && displayer.wake <= 0 && displayer.owned) {
 			displayer_update();
-			displayer.wake = 100;
+			displayer.wake = 40;
 		}
 		
 		// need to make sure we own display
