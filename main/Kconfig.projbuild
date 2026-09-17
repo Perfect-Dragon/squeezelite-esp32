@@ -105,7 +105,7 @@ menu "Squeezelite-ESP32"
 			default "model=TAS57xx,bck=33,ws=25,do=32,sda=27,scl=26,mute=14:0" if SQUEEZEAMP
 			default "model=I2S,bck=26,ws=25,do=33,i2c=53,sda=21,scl=22" if TWATCH2020
 			default "model=I2S,bck=5,ws=25,do=26,di=35,i2c=16,sda=18,scl=23,mck" if MUSE
-			default ""
+			default "model=I2S,bck=33,ws=26,do=25"
 		config SPDIF_CONFIG
 			string
 			default "bck=33,ws=25,do=15" if SQUEEZEAMP
@@ -117,11 +117,11 @@ menu "Squeezelite-ESP32"
 			string
 			default "dc=27,data=19,clk=18" if TWATCH2020	
 			default "mosi=15,miso=2,clk=14"	if MUSE
-			default	""          
+			default "data=22,clk=23,dc=18,host=1"          
 		config DISPLAY_CONFIG
 			string
 			default "SPI,driver=ST7789,width=240,height=240,cs=5,back=12,speed=16000000,HFlip,VFlip" if TWATCH2020
-			default ""
+			default "SPI,width=320,height=240,cs=21,reset=19,speed=16000000,driver=ST7789,rotate,HFlip"
 		config ETH_CONFIG
 			string
 			default ""

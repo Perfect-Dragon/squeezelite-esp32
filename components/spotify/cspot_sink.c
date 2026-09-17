@@ -120,20 +120,22 @@ static bool cmd_handler(cspot_event_t event, ...) {
 	switch(event) {
 	case CSPOT_START:
 		actrls_set(controls, false, NULL, actrls_ir_action);
-		displayer_control(DISPLAYER_ACTIVATE, "SPOTIFY", true);
+		// Local spectrum visualizer owns the TFT.
+    	// Do not activate the legacy metadata display.
+		//displayer_control(DISPLAYER_ACTIVATE, "SPOTIFY", true);
 		break;
 	case CSPOT_PLAY:
-		displayer_control(DISPLAYER_TIMER_RUN);
+		// displayer_control(DISPLAYER_TIMER_RUN);
 		break;		
 	case CSPOT_PAUSE:
-		displayer_control(DISPLAYER_TIMER_PAUSE);
+		// displayer_control(DISPLAYER_TIMER_PAUSE);
 		break;		
 	case CSPOT_DISC:
 		actrls_unset();
-		displayer_control(DISPLAYER_SUSPEND);
+		// displayer_control(DISPLAYER_SUSPEND);
 		break;
 	case CSPOT_SEEK:
-		displayer_timer(DISPLAYER_ELAPSED, va_arg(args, int), -1);
+		// displayer_timer(DISPLAYER_ELAPSED, va_arg(args, int), -1);
 		break;
 	case CSPOT_TRACK_INFO: {
 		uint32_t duration = va_arg(args, int), offset = va_arg(args, int);
@@ -142,8 +144,8 @@ static bool cmd_handler(cspot_event_t event, ...) {
 			ESP_LOGI(TAG, "requesting artwork %s", artwork);
 			http_download(artwork, 128*1024, got_artwork, NULL);
 		}	
-		displayer_metadata(artist, album, title);
-		displayer_timer(DISPLAYER_ELAPSED, offset, duration);
+		// displayer_metadata(artist, album, title);
+		// displayer_timer(DISPLAYER_ELAPSED, offset, duration);
 		break;
 	}	
 	// nothing to do on CSPOT_FLUSH

@@ -261,6 +261,8 @@ static void ledv_handler(u8_t *data, int len);
 static void ledd_handler(u8_t *data, int len);
 static void displayer_task(void* arg);
 
+void local_visualizer_start(void);
+
 /* scrolling undocumented information
 	grfs	
 		B: screen number
@@ -1153,7 +1155,64 @@ static void visu_fit(int bars, int width, int height) {
 	} while (--visu.n);	
 	
 	visu.bar_border = (width - visu.border - (visu.bar_width + visu.bar_gap) * visu.n + visu.bar_gap) / 2;
-}	
+}
+
+/****************************************************************************************
+ * standalone local spectrum visualizer
+ */
+void local_visualizer_start(void) {
+
+    if (!display || !displayer.mutex) {
+        LOG_WARN("Cannot start local visualizer: display not ready");
+        return;
+    }
+
+    xSemaphoreTake(displayer.mutex, portMAX_DELAY);
+
+    // We want the local visualizer to use the main display
+    scroller.active = false;
+
+    // Spectrum analyzer + ESP32-controlled mode
+    visu.mode = VISU_SPECTRUM | VISU_ESP32;
+
+    // Full 320x240 display
+    visu.col = 0;
+    visu.row = 0;
+    visu.width = GDS_GetWidth(display);
+    visu.height = GDS_GetHeight(display);
+
+    // Basic layout for first test
+    visu.border = 0;
+    visu.rotate = false;
+    visu.style = 0;
+
+    // Existing spectrum code expects this in the 0.0 - 0.5 range
+    visu.spectrum_scale = 0.5f;
+
+    // 20 spectrum bars
+    visu_fit(20, visu.width, visu.height);
+
+    // Reset bar state
+    for (int i = 0; i < visu.n; i++) {
+        visu.bars[i].current = 0;
+        visu.bars[i].max = 0;
+    }
+
+    // Remove the existing "SqueezeESP32" screen
+    GDS_Clear(display, GDS_COLOR_BLACK);
+
+    // Tell display task to update immediately
+    displayer.wake = 0;
+
+    xSemaphoreGive(displayer.mutex);
+
+    // The normal task suspends itself when no visualizer is active,
+    // so make sure it is running now.
+    vTaskResume(displayer.task);
+
+    LOG_INFO("Local spectrum visualizer started: %d bars, %dx%d",
+             visu.n, visu.width, visu.height);
+}
 
 /****************************************************************************************
  * Visu packet handler

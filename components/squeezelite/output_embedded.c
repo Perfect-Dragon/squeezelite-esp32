@@ -34,6 +34,8 @@ extern void output_close_i2s(void);
 
 // controls.c
 extern void cli_controls_init(void);
+// displayer.c
+extern void local_visualizer_start(void);
 
 static log_level loglevel;
 
@@ -104,6 +106,8 @@ void output_init_embedded(log_level level, char *device, unsigned output_buf_siz
 	}	
 	
 	output_visu_init(level);
+
+	local_visualizer_start();
 	
 	LOG_INFO("init completed.");
 }	
