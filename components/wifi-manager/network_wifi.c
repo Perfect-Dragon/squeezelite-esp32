@@ -652,19 +652,40 @@ void destroy_network_wifi() {
 }
 
 bool network_wifi_sta_config_changed() {
-    bool changed = true;
-    const wifi_sta_config_t* sta = network_wifi_get_active_config();
-    if (!sta || strlen(ssid_string(sta)) == 0)
-        return false;
 
-    known_access_point_t* known = network_wifi_get_ap_entry(ssid_string(sta));
-    if (known && strcmp(known->ssid, ssid_string(sta)) == 0 &&
-        strcmp((char*)known->password, password_string(sta)) == 0) {
-        changed = false;
-    } else {
-        ESP_LOGI(TAG, "New network configuration found");
+    const wifi_sta_config_t* sta = network_wifi_get_active_config();
+
+    if (!sta || sta->ssid[0] == '\0') {
+        return false;
     }
-    return changed;
+
+    /*
+     * First check whether the AP itself is new
+     * or its password changed.
+     */
+    known_access_point_t* known = network_wifi_get_ap_entry((char*)sta->ssid);
+
+    const char* known_password = (known && known->password) ? known->password : "";
+
+    if (!known || strcmp(known->ssid, (char*)sta->ssid) != 0 || strcmp(known_password, (char*)sta->password) != 0) {
+        ESP_LOGI(TAG, "New network configuration found");
+        return true;
+    }
+
+    /*
+     * AP may already be known, but it can still be
+     * different from the preferred/last-used AP
+     * stored in NVS.
+     */
+    const wifi_sta_config_t* saved = network_wifi_load_active_config();
+
+    if (!saved || strcmp((char*)saved->ssid, (char*)sta->ssid) != 0 || strcmp((char*)saved->password, (char*)sta->password) != 0) {
+
+        ESP_LOGI(TAG, "Active WiFi changed to %s", (char*)sta->ssid);
+        return true;
+    }
+
+    return false;
 }
 
 esp_err_t network_wifi_save_sta_config() {

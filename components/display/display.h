@@ -42,3 +42,4 @@ void displayer_artwork(uint8_t *data);
 void displayer_timer(enum displayer_time_e mode, int elapsed, int duration);
 bool displayer_can_artwork(void);
 char * display_get_supported_drivers(void);
+void displayer_local_title(const char *title);

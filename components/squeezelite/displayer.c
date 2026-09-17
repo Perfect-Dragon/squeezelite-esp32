@@ -146,7 +146,7 @@ static uint32_t *grayMap;
 #define SB_HEIGHT		32
 
 // lenght are number of frames, i.e. 2 channels of 16 bits
-#define	FFT_LEN_BIT	7		
+#define	FFT_LEN_BIT	10		
 #define	FFT_LEN		(1 << FFT_LEN_BIT)
 #define RMS_LEN_BIT	6
 #define RMS_LEN		(1 << RMS_LEN_BIT)
@@ -367,7 +367,9 @@ bool sb_displayer_init(void) {
 	// inform LMS of our screen/led dimensions
 	sendSETD(GDS_GetWidth(display), GDS_GetHeight(display), led_visu.config);
 	
-	dsps_fft2r_init_fc32(meters.fft, FFT_LEN);
+	// dsps_fft2r_init_fc32(meters.fft, FFT_LEN);
+	esp_err_t fft_err = dsps_fft2r_init_fc32(meters.fft, FFT_LEN);
+	LOG_INFO("FFT init: size=%d result=%s (%d)", FFT_LEN, esp_err_to_name(fft_err), fft_err);
 	dsps_wind_hann_f32(meters.hanning, FFT_LEN);
 		
 	// create displayer management task
@@ -1179,7 +1181,8 @@ void local_visualizer_start(void) {
 	visu.col = 0;
 	visu.width = GDS_GetWidth(display);
 
-	visu.height = GDS_GetHeight(display) / 2;
+	int display_height = GDS_GetHeight(display);
+	visu.height = (display_height * 2) / 3;
 	visu.row = GDS_GetHeight(display) - visu.height;
 
     // Basic layout for first test
@@ -1196,22 +1199,22 @@ void local_visualizer_start(void) {
     visu_fit(16, visu.width, visu.height);
 	
 	static const int local_band_limits[16] = {
-		350,
-		700,
-		1050,
-		1400,
-		2100,
-		2800,
-		3500,
-		4500,
-		6000,
-		7500,
-		9000,
-		11000,
-		13000,
-		15000,
-		17500,
-		20000
+		73,
+		107,
+		158,
+		233,
+		343,
+		505,
+		744,
+		1096,
+		1614,
+		2377,
+		3501,
+		5157,
+		7595,
+		11188,
+		16479,
+		22050
 	};
 
 	for (int i = 0; i < visu.n; i++) {
@@ -1230,6 +1233,8 @@ void local_visualizer_start(void) {
              visu.row,
              visu.col + visu.width - 1,
              visu.row + visu.height - 1);
+
+		// GDS_Clear(display, GDS_COLOR_BLACK);
 
     // Tell display task to update immediately
     displayer.wake = 0;

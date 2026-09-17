@@ -831,7 +831,7 @@ static state_machine_result_t WIFI_CONNECTING_STATE_handler(state_machine_t* con
             } else {network_connect_active_ssid(State_Machine);}
 
             network_set_timer(nm->sta_polling_min_ms, "Wifi polling timeout");
-            
+
             break;
         case EN_LOST_CONNECTION:
 
@@ -855,7 +855,7 @@ static state_machine_result_t WIFI_CONNECTING_STATE_handler(state_machine_t* con
                         "Will try another network (%d/%d)",
                         nm->retries, (int)known - 1);
 
-                    network_set_timer(nm->sta_polling_min_ms, "Trying next saved WiFi");
+                    network_set_timer(500, "Trying next saved WiFi");
 
                     result = EVENT_HANDLED;
 

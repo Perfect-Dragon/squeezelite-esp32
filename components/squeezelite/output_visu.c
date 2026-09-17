@@ -22,7 +22,7 @@
 
 #include "squeezelite.h"
 
-#define VISUEXPORT_SIZE	512
+#define VISUEXPORT_SIZE	1024
 
 EXT_BSS struct visu_export_s visu_export;
 static struct visu_export_s *visu = &visu_export;
