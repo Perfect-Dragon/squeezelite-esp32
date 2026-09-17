@@ -141,7 +141,7 @@ static bool cmd_handler(cspot_event_t event, ...) {
 		uint32_t duration = va_arg(args, int), offset = va_arg(args, int);
 		char *artist = va_arg(args, char*), *album = va_arg(args, char*), *title = va_arg(args, char*), *artwork = va_arg(args, char*);
 
-		// displayer_local_title(title);
+		displayer_local_title(title);
 
 		if (artwork && displayer_can_artwork()) {
 			ESP_LOGI(TAG, "requesting artwork %s", artwork);

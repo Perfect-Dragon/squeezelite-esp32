@@ -245,6 +245,11 @@ static bool (*display_bus_chain)(void *from, enum display_bus_cmd_e cmd);
 
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 
+#define LOCAL_TITLE_MAX 96
+
+static char local_title[LOCAL_TITLE_MAX];
+static bool local_title_dirty = false;
+
 static void server(in_addr_t ip, u16_t hport, u16_t cport);
 static void sendSETD(u16_t width, u16_t height, u16_t led_config);
 static void sendANIC(u8_t code);
@@ -1433,6 +1438,93 @@ static void ledd_handler( u8_t *data, int len) {
  *  - with the addition of the visualizer, it's a bit a 2-headed beast not easy to 
  * maintain, so som better separation between the visu and scroll is probably needed
   */
+
+void displayer_local_title(const char *title) {
+    if (!display || !displayer.mutex || !title) {
+        return;
+    }
+
+    xSemaphoreTake(displayer.mutex, portMAX_DELAY);
+
+    strncpy(local_title, title, LOCAL_TITLE_MAX - 1);
+    local_title[LOCAL_TITLE_MAX - 1] = '\0';
+
+    local_title_dirty = true;
+    displayer.wake = 0;
+
+    xSemaphoreGive(displayer.mutex);
+
+    if (displayer.task) {
+        vTaskResume(displayer.task);
+    }
+}
+
+
+static void local_title_draw(void) {
+    if (!local_title_dirty || !display) {
+        return;
+    }
+
+    const int header_height = 80;
+    const int screen_width = GDS_GetWidth(display);
+
+    // Clear only the area above the spectrum
+    GDS_ClearWindow(
+        display,
+        0,
+        0,
+        screen_width - 1,
+        header_height - 1,
+        GDS_COLOR_BLACK
+    );
+
+    /*
+     * Start with the large 24x28 font.
+     * Fall back to 15x17 for longer titles.
+     */
+    GDS_SetFont(display, &Font_droid_sans_fallback_24x28);
+
+    if (GDS_FontMeasureString(display, local_title) > screen_width - 16) {
+        GDS_SetFont(display, &Font_droid_sans_fallback_15x17);
+    }
+
+    // Make a temporary copy so we can shorten it if necessary
+    char shown[LOCAL_TITLE_MAX];
+    strncpy(shown, local_title, sizeof(shown) - 1);
+    shown[sizeof(shown) - 1] = '\0';
+
+    int len = strlen(shown);
+
+    while (len > 3 && GDS_FontMeasureString(display, shown) > screen_width - 16) {
+        shown[--len] = '\0';
+    }
+
+    // Add ... if we had to truncate
+    if (strcmp(shown, local_title) != 0 && len > 3) {
+        while (len > 3 && GDS_FontMeasureString(display, shown) + GDS_FontMeasureString(display, "...") > screen_width - 16) {
+            shown[--len] = '\0';
+        }
+
+        strncat(shown, "...", sizeof(shown) - strlen(shown) - 1);
+    }
+
+    int text_width = GDS_FontMeasureString(display, shown);
+    int font_height = GDS_FontGetHeight(display);
+
+    int x = (screen_width - text_width) / 2;
+    int y = (header_height - font_height) / 2;
+
+    GDS_FontDrawString(
+        display,
+        x,
+        y,
+        shown,
+        GDS_COLOR_WHITE
+    );
+
+    local_title_dirty = false;
+}
+
 static void displayer_task(void *args) {
 	int sleep;
 
@@ -1487,6 +1579,10 @@ static void displayer_task(void *args) {
 		if ((visu.mode || led_visu.mode) && displayer.wake <= 0 && displayer.owned) {
 			displayer_update();
 			displayer.wake = 40;
+		}
+
+		if (local_title_dirty && displayer.owned){
+			local_title_draw();
 		}
 		
 		// need to make sure we own display
