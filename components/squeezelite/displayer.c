@@ -247,8 +247,21 @@ static bool (*display_bus_chain)(void *from, enum display_bus_cmd_e cmd);
 
 #define LOCAL_TITLE_MAX 96
 
+#define LOCAL_TITLE_MARGIN       8
+#define LOCAL_TITLE_SCROLL_STEP  2
+#define LOCAL_TITLE_SCROLL_MS    80
+#define LOCAL_TITLE_PAUSE_MS     1000
+
 static char local_title[LOCAL_TITLE_MAX];
 static bool local_title_dirty = false;
+
+static bool local_title_scrolling = false;
+static bool local_title_at_end = false;
+
+static int local_title_offset = 0;
+static int local_title_max_offset = 0;
+
+static TickType_t local_title_next_move = 0;
 
 static void server(in_addr_t ip, u16_t hport, u16_t cport);
 static void sendSETD(u16_t width, u16_t height, u16_t led_config);
@@ -1449,6 +1462,13 @@ void displayer_local_title(const char *title) {
     strncpy(local_title, title, LOCAL_TITLE_MAX - 1);
     local_title[LOCAL_TITLE_MAX - 1] = '\0';
 
+    // Reset scrolling whenever a new song arrives
+    local_title_offset = 0;
+    local_title_max_offset = 0;
+    local_title_scrolling = false;
+    local_title_at_end = false;
+    local_title_next_move = 0;
+
     local_title_dirty = true;
     displayer.wake = 0;
 
@@ -1459,7 +1479,6 @@ void displayer_local_title(const char *title) {
     }
 }
 
-
 static void local_title_draw(void) {
     if (!local_title_dirty || !display) {
         return;
@@ -1467,8 +1486,34 @@ static void local_title_draw(void) {
 
     const int header_height = 80;
     const int screen_width = GDS_GetWidth(display);
+    const int available_width = screen_width - (2 * LOCAL_TITLE_MARGIN);
 
-    // Clear only the area above the spectrum
+    // Always use the same font
+    GDS_SetFont(display, &Font_droid_sans_fallback_24x28);
+
+    int text_width = GDS_FontMeasureString(display, local_title);
+
+    int font_height = GDS_FontGetHeight(display);
+
+    /*
+     * Decide whether scrolling is required.
+     */
+    if (text_width > available_width) {
+
+        local_title_scrolling = true;
+        local_title_max_offset = text_width - available_width;
+
+        if (local_title_offset > local_title_max_offset) {
+            local_title_offset = local_title_max_offset;
+        }
+
+    } else {
+        local_title_scrolling = false;
+        local_title_offset = 0;
+        local_title_max_offset = 0;
+    }
+
+    // Clear ONLY the 80 px title area
     GDS_ClearWindow(
         display,
         0,
@@ -1478,49 +1523,33 @@ static void local_title_draw(void) {
         GDS_COLOR_BLACK
     );
 
-    /*
-     * Start with the large 24x28 font.
-     * Fall back to 15x17 for longer titles.
-     */
-    GDS_SetFont(display, &Font_droid_sans_fallback_24x28);
+    int x;
+    if (local_title_scrolling) {
+        x = LOCAL_TITLE_MARGIN - local_title_offset;
 
-    if (GDS_FontMeasureString(display, local_title) > screen_width - 16) {
-        GDS_SetFont(display, &Font_droid_sans_fallback_15x17);
+    } else {
+
+        // Center titles that fit
+        x = (screen_width - text_width) / 2;
     }
 
-    // Make a temporary copy so we can shorten it if necessary
-    char shown[LOCAL_TITLE_MAX];
-    strncpy(shown, local_title, sizeof(shown) - 1);
-    shown[sizeof(shown) - 1] = '\0';
-
-    int len = strlen(shown);
-
-    while (len > 3 && GDS_FontMeasureString(display, shown) > screen_width - 16) {
-        shown[--len] = '\0';
-    }
-
-    // Add ... if we had to truncate
-    if (strcmp(shown, local_title) != 0 && len > 3) {
-        while (len > 3 && GDS_FontMeasureString(display, shown) + GDS_FontMeasureString(display, "...") > screen_width - 16) {
-            shown[--len] = '\0';
-        }
-
-        strncat(shown, "...", sizeof(shown) - strlen(shown) - 1);
-    }
-
-    int text_width = GDS_FontMeasureString(display, shown);
-    int font_height = GDS_FontGetHeight(display);
-
-    int x = (screen_width - text_width) / 2;
     int y = (header_height - font_height) / 2;
 
     GDS_FontDrawString(
         display,
         x,
         y,
-        shown,
+        local_title,
         GDS_COLOR_WHITE
     );
+
+    /*
+     * First time a long title is drawn,
+     * leave it still for one second.
+     */
+    if (local_title_scrolling && local_title_next_move == 0) {
+        local_title_next_move = xTaskGetTickCount() + pdMS_TO_TICKS(LOCAL_TITLE_PAUSE_MS);
+    }
 
     local_title_dirty = false;
 }
@@ -1581,7 +1610,42 @@ static void displayer_task(void *args) {
 			displayer.wake = 40;
 		}
 
-		if (local_title_dirty && displayer.owned){
+		/*
+		* Update long-title scrolling.
+		*/
+		if (local_title_scrolling && displayer.owned) {
+			TickType_t now = xTaskGetTickCount();
+
+			if ((int32_t)(now - local_title_next_move) >= 0) {
+				if (!local_title_at_end) {
+					local_title_offset += LOCAL_TITLE_SCROLL_STEP;
+
+					if (local_title_offset >= local_title_max_offset) {
+						local_title_offset = local_title_max_offset;
+						local_title_at_end = true;
+						// Pause when the end is fully visible
+						local_title_next_move = now + pdMS_TO_TICKS(LOCAL_TITLE_PAUSE_MS);
+
+					} else {
+						local_title_next_move = now + pdMS_TO_TICKS(LOCAL_TITLE_SCROLL_MS);
+					}
+
+					local_title_dirty = true;
+
+				} else {
+					/*
+					* Return to the start and pause there
+					* before scrolling again.
+					*/
+					local_title_offset = 0;
+					local_title_at_end = false;
+					local_title_next_move = now + pdMS_TO_TICKS(LOCAL_TITLE_PAUSE_MS);
+					local_title_dirty = true;
+				}
+			}
+		}
+
+		if (local_title_dirty && displayer.owned) {
 			local_title_draw();
 		}
 		
