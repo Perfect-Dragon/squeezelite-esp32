@@ -217,8 +217,19 @@ void TrackPlayer::runTask() {
           VORBIS_SEEK(&vorbisFile, seekPosition);
         }
 
+        auto decodeStart = bell::tv::now().ms();
+
         long ret = VORBIS_READ(&vorbisFile, (char*)&pcmBuffer[0],
                                pcmBuffer.size(), &currentSection);
+
+        auto decodeMs = bell::tv::now().ms() - decodeStart;
+
+        if (decodeMs > 50) {
+            CSPOT_LOG(info,
+                      "SLOW VORBIS_READ: %lldms, PCM=%d bytes",
+                      (long long)decodeMs,
+                      (int)ret);
+        }
 
         if (ret == 0) {
           CSPOT_LOG(info, "EOF");
@@ -238,9 +249,18 @@ void TrackPlayer::runTask() {
                 // If reset happened during playback, return
                 if (!currentSongPlaying || pendingReset)
                   break;
-
+                auto writeStart = bell::tv::now().ms();
                 written = dataCallback(pcmBuffer.data() + (ret - toWrite),
                                        toWrite, track->identifier);
+
+              auto writeMs = bell::tv::now().ms() - writeStart;
+
+              if (writeMs > 20) {
+                  CSPOT_LOG(info, "SLOW PCM WRITE: %lldms written=%d requested=%d",
+                            (long long)writeMs,
+                            written,
+                            toWrite);
+              }
               }
               if (written == 0) {
                 BELL_SLEEP_MS(50);

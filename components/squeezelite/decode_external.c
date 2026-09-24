@@ -392,7 +392,7 @@ static bool cspot_cmd_handler(cspot_event_t cmd, va_list args)
 		break;
 	case CSPOT_PLAY:
 		sink_state = SINK_RUNNING;			
-		output.state = OUTPUT_RUNNING;
+		output.state = OUTPUT_BUFFER;
 		LOG_INFO("CSpot play");
 		break;
 	case CSPOT_SEEK:

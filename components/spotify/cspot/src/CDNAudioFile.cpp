@@ -7,6 +7,7 @@
 #include <stdexcept>         // for runtime_error
 #include <string_view>       // for string_view
 #include <type_traits>       // for remove_extent_t
+#include "BellUtils.h"
 
 #include "AccessKeyFetcher.h"  // for AccessKeyFetcher
 #include "BellLogger.h"        // for AbstractLogger
@@ -134,14 +135,35 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
     size_t readCapacity = 0;
 
     try {
+      auto httpStart = bell::tv::now().ms();
+
       this->httpConnection->get(
           cdnUrl,
           {bell::HTTPClient::RangeHeader::range(
               requestPosition, requestPosition + HTTP_BUFFER_SIZE - 1)});
+      
+      auto headersDone = bell::tv::now().ms();
+
       readCapacity = this->httpConnection->contentLength();
 
       this->httpConnection->stream().read((char*)this->httpBuffer.data(),
                                           readCapacity);
+
+      auto bodyDone = bell::tv::now().ms();
+
+      auto headerMs = headersDone - httpStart;
+      auto bodyMs = bodyDone - headersDone;
+      auto totalMs = bodyDone - httpStart;
+
+      if (totalMs > 100) {
+          CSPOT_LOG(info,
+                    "CDN READ pos=%u size=%u headers=%lldms body=%lldms total=%lldms",
+                    (unsigned int)requestPosition,
+                    (unsigned int)readCapacity,
+                    (long long)headerMs,
+                    (long long)bodyMs,
+                    (long long)totalMs);
+      }
 
       if (this->httpConnection->stream().gcount() !=
           (std::streamsize)readCapacity) {
