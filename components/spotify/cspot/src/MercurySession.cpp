@@ -38,14 +38,19 @@ void MercurySession::runTask() {
   while (isRunning) {
     cspot::Packet packet = {};
     try {
-      packet = shanConn->recvPacket();
+      auto connection = std::atomic_load(&this->shanConn);
+      if (!connection) {
+        BELL_SLEEP_MS(50);
+        continue;
+      }
+      packet = connection->recvPacket();
       CSPOT_LOG(info, "Received packet, command: %d", packet.command);
 
       if (static_cast<RequestType>(packet.command) == RequestType::PING) {
         timeProvider->syncWithPingPacket(packet.data);
 
         this->lastPingTimestamp = timeProvider->getSyncedTimestamp();
-        this->shanConn->sendPacket(0x49, packet.data);
+        connection->sendPacket(0x49, packet.data);
       } else {
         this->packetQueue.push(packet);
       }
@@ -67,7 +72,7 @@ void MercurySession::reconnect() {
 
   try {
     this->conn = nullptr;
-    this->shanConn = nullptr;
+    std::atomic_store(&this->shanConn, std::shared_ptr<cspot::ShannonConnection>{});
 
     this->connectWithRandomAp();
     this->authenticate(this->authBlob);
@@ -305,14 +310,28 @@ uint64_t MercurySession::executeSubscription(RequestType method,
   // Bump sequence id
   this->sequenceId += 1;
 
+  auto connection = std::atomic_load(&this->shanConn);
+
+  if (!connection) {
+    CSPOT_LOG(info, "Mercury request skipped while reconnecting");
+
+    this->callbacks.erase(this->sequenceId - 1);
+
+    return 0;
+  }
+
   try {
-    this->shanConn->sendPacket(
+    connection->sendPacket(
         static_cast<std::underlying_type<RequestType>::type>(method),
         sequenceIdBytes);
   } catch (...) {
-    // @TODO: handle disconnect
-  }
+    CSPOT_LOG(error, "Failed to send Mercury request");
 
+    this->callbacks.erase(this->sequenceId - 1);
+
+    return 0;
+  }
+  // Request was successfully sent: return its sequence ID
   return this->sequenceId - 1;
 }
 
@@ -337,11 +356,26 @@ uint32_t MercurySession::requestAudioKey(const std::vector<uint8_t>& trackId,
 
   // Used for broken connection detection
   // this->lastRequestTimestamp = timeProvider->getSyncedTimestamp();
+auto connection = std::atomic_load(&this->shanConn);
+
+if (!connection) {
+  CSPOT_LOG(info, "Audio key request skipped while reconnecting");
+
+  this->audioKeyCallbacks.erase(this->audioKeySequence - 1);
+
+  return 0;
+}
+
   try {
-    this->shanConn->sendPacket(
-        static_cast<uint8_t>(RequestType::AUDIO_KEY_REQUEST_COMMAND), buffer);
+    connection->sendPacket(
+        static_cast<uint8_t>(RequestType::AUDIO_KEY_REQUEST_COMMAND),
+        buffer);
   } catch (...) {
-    // @TODO: Handle disconnect
+    CSPOT_LOG(error, "Failed to request audio key");
+
+    this->audioKeyCallbacks.erase(this->audioKeySequence - 1);
+
+    return 0;
   }
   return audioKeySequence - 1;
 }

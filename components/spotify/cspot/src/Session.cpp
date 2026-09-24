@@ -7,6 +7,8 @@
 #include <random>       // for default_random_engine, independent_bi...
 #include <type_traits>  // for remove_extent_t
 #include <utility>      // for move
+#include <atomic>
+#include <stdexcept>
 
 #include "ApResolve.h"          // for ApResolve, cspot
 #include "AuthChallenges.h"     // for AuthChallenges
@@ -48,11 +50,11 @@ void Session::connect(std::unique_ptr<cspot::PlainConnection> connection) {
   CSPOT_LOG(debug, "Received shannon keys");
 
   // Generates the public and priv key
-  this->shanConn = std::make_shared<ShannonConnection>();
+  auto newShanConn = std::make_shared<ShannonConnection>();
 
-  // Init shanno-encrypted connection
-  this->shanConn->wrapConnection(this->conn, challenges->shanSendKey,
-                                 challenges->shanRecvKey);
+  newShanConn->wrapConnection(this->conn, challenges->shanSendKey, challenges->shanRecvKey);
+
+  std::atomic_store(&this->shanConn, newShanConn);
 }
 
 void Session::connectWithRandomAp() {
@@ -78,9 +80,17 @@ std::vector<uint8_t> Session::authenticate(std::shared_ptr<LoginBlob> blob) {
                                             deviceId, blob->username);
 
   // Send login request
-  this->shanConn->sendPacket(LOGIN_REQUEST_COMMAND, data);
+  // Take a thread-safe snapshot of the current Shannon connection
+  auto connection = std::atomic_load(&this->shanConn);
 
-  auto packet = this->shanConn->recvPacket();
+  if (!connection) {
+    throw std::runtime_error("Shannon connection unavailable");
+  }
+
+  // Send login request
+  connection->sendPacket(LOGIN_REQUEST_COMMAND, data);
+
+  auto packet = connection->recvPacket();
   switch (packet.command) {
     case AUTH_SUCCESSFUL_COMMAND: {
       APWelcome welcome;
