@@ -85,6 +85,10 @@ class CDNAudioFile {
   std::string cdnUrl;
   std::vector<uint8_t> audioKey;
 
+  bool fetchHttpRange(const bell::HTTPClient::ValueHeader& range,
+                      uint8_t* dst, size_t dstCapacity,
+                      size_t& readCapacity, const char* label,
+                      size_t logPosition);
   void decrypt(uint8_t* dst, size_t nbytes, size_t pos);
 };
 }  // namespace cspot

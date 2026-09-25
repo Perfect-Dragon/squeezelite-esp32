@@ -34,8 +34,8 @@ class TLSSocket : public bell::Socket {
 
   void open(const std::string& host, uint16_t port);
 
-  size_t read(uint8_t* buf, size_t len);
-  size_t write(uint8_t* buf, size_t len);
+  int read(uint8_t* buf, size_t len);
+  int write(uint8_t* buf, size_t len);
   size_t poll();
   bool isOpen();
 

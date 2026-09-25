@@ -41,15 +41,105 @@ void CDNAudioFile::seek(size_t newPos) {
   this->position = newPos;
 }
 
+bool CDNAudioFile::fetchHttpRange(
+    const bell::HTTPClient::ValueHeader& range, uint8_t* dst,
+    size_t dstCapacity, size_t& readCapacity, const char* label,
+    size_t logPosition) {
+  constexpr int HTTP_ATTEMPTS = 2;
+
+  readCapacity = 0;
+
+  for (int attempt = 0; attempt < HTTP_ATTEMPTS; ++attempt) {
+    try {
+      if (!this->httpConnection) {
+        this->httpConnection =
+            std::make_unique<bell::HTTPClient::Response>();
+        this->httpConnection->connect(this->cdnUrl);
+      }
+
+      auto httpStart = bell::tv::now().ms();
+
+      CSPOT_LOG(info, "CDN %s begin response=%p pos=%u attempt=%d",
+                label, static_cast<void*>(httpConnection.get()),
+                (unsigned)logPosition, attempt + 1);
+
+      this->httpConnection->get(this->cdnUrl, {range});
+
+      auto headersDone = bell::tv::now().ms();
+
+      readCapacity = this->httpConnection->contentLength();
+
+      if (readCapacity == 0 || readCapacity > dstCapacity) {
+        throw std::runtime_error("Invalid HTTP audio range length");
+      }
+
+      CSPOT_LOG(info, "CDN %s body begin response=%p pos=%u expected=%u",
+                label, static_cast<void*>(httpConnection.get()),
+                (unsigned)logPosition, (unsigned)readCapacity);
+
+      this->httpConnection->stream().read((char*)dst, readCapacity);
+
+      auto bodyDone = bell::tv::now().ms();
+
+      auto headerMs = headersDone - httpStart;
+      auto bodyMs = bodyDone - headersDone;
+      auto totalMs = bodyDone - httpStart;
+
+      CSPOT_LOG(info, "CDN %s body end response=%p got=%lld expected=%u state=%u",
+                label, static_cast<void*>(httpConnection.get()),
+                (long long)httpConnection->stream().gcount(),
+                (unsigned)readCapacity,
+                (unsigned)httpConnection->stream().rdstate());
+
+      if (totalMs > 100 || attempt > 0) {
+        CSPOT_LOG(info,
+                  "CDN %s pos=%u size=%u attempt=%d headers=%lldms "
+                  "body=%lldms total=%lldms",
+                  label, (unsigned int)logPosition,
+                  (unsigned int)readCapacity, attempt + 1,
+                  (long long)headerMs, (long long)bodyMs,
+                  (long long)totalMs);
+      }
+
+      if (this->httpConnection->stream().gcount() !=
+          (std::streamsize)readCapacity) {
+        throw std::runtime_error("Short read of audio range body");
+      }
+
+      return true;
+    } catch (const std::exception& e) {
+      CSPOT_LOG(error,
+                "CDN %s pos=%u attempt=%d/%d failed: %s",
+                label, (unsigned int)logPosition, attempt + 1,
+                HTTP_ATTEMPTS, e.what());
+
+      // Drop the entire HTTP/TLS object. A timed-out keep-alive
+      // connection must not be reused for the retry.
+      this->httpConnection.reset();
+      readCapacity = 0;
+
+      if (attempt + 1 < HTTP_ATTEMPTS) {
+        BELL_SLEEP_MS(50);
+      }
+    }
+  }
+
+  return false;
+}
+
 void CDNAudioFile::openStream() {
   CSPOT_LOG(info, "Opening HTTP stream to %s", this->cdnUrl.c_str());
 
-  // Open connection, read first 128 bytes
-  this->httpConnection = bell::HTTPClient::get(
-      this->cdnUrl,
-      {bell::HTTPClient::RangeHeader::range(0, OPUS_HEADER_SIZE - 1)});
+  size_t headerCapacity = 0;
 
-  this->httpConnection->stream().read((char*)header.data(), OPUS_HEADER_SIZE);
+  if (!fetchHttpRange(
+          bell::HTTPClient::RangeHeader::range(0, OPUS_HEADER_SIZE - 1),
+          this->header.data(), this->header.size(), headerCapacity,
+          "HEADER", 0) ||
+      headerCapacity != this->header.size()) {
+    throw std::runtime_error("Failed to fetch complete audio header");
+  }
+
   this->totalFileSize =
       this->httpConnection->totalLength() - SPOTIFY_OPUS_HEADER;
 
@@ -62,11 +152,16 @@ void CDNAudioFile::openStream() {
 
   this->footer = std::vector<uint8_t>(
       this->totalFileSize - footerStartLocation + SPOTIFY_OPUS_HEADER);
-  this->httpConnection->get(
-      cdnUrl, {bell::HTTPClient::RangeHeader::last(footer.size())});
 
-  this->httpConnection->stream().read((char*)footer.data(),
-                                      this->footer.size());
+  size_t footerCapacity = 0;
+
+  if (!fetchHttpRange(
+          bell::HTTPClient::RangeHeader::last(this->footer.size()),
+          this->footer.data(), this->footer.size(), footerCapacity,
+          "FOOTER", footerStartLocation) ||
+      footerCapacity != this->footer.size()) {
+    throw std::runtime_error("Failed to fetch complete audio footer");
+  }
 
   this->decrypt(footer.data(), footer.size(), footerStartLocation);
   CSPOT_LOG(info, "Header and footer bytes received");
@@ -134,48 +229,16 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
 
     size_t readCapacity = 0;
 
-    try {
-      auto httpStart = bell::tv::now().ms();
-
-      this->httpConnection->get(
-          cdnUrl,
-          {bell::HTTPClient::RangeHeader::range(
-              requestPosition, requestPosition + HTTP_BUFFER_SIZE - 1)});
-      
-      auto headersDone = bell::tv::now().ms();
-
-      readCapacity = this->httpConnection->contentLength();
-
-      this->httpConnection->stream().read((char*)this->httpBuffer.data(),
-                                          readCapacity);
-
-      auto bodyDone = bell::tv::now().ms();
-
-      auto headerMs = headersDone - httpStart;
-      auto bodyMs = bodyDone - headersDone;
-      auto totalMs = bodyDone - httpStart;
-
-      if (totalMs > 100) {
-          CSPOT_LOG(info,
-                    "CDN READ pos=%u size=%u headers=%lldms body=%lldms total=%lldms",
-                    (unsigned int)requestPosition,
-                    (unsigned int)readCapacity,
-                    (long long)headerMs,
-                    (long long)bodyMs,
-                    (long long)totalMs);
-      }
-
-      if (this->httpConnection->stream().gcount() !=
-          (std::streamsize)readCapacity) {
-        throw std::runtime_error("Short read of audio chunk body");
-      }
-    } catch (const std::exception& e) {
-      // A network failure must not propagate through the vorbis C call
-      // frames above us (TrackPlayer::runTask has no handler). Invalidate
-      // the cache window and report EOF so the player survives and moves
-      // on to the next track.
-      CSPOT_LOG(error, "Failed to read audio chunk at %u: %s",
-                (unsigned int)requestPosition, e.what());
+    if (!fetchHttpRange(
+            bell::HTTPClient::RangeHeader::range(
+                requestPosition, requestPosition + HTTP_BUFFER_SIZE - 1),
+            this->httpBuffer.data(), this->httpBuffer.size(),
+            readCapacity, "READ", requestPosition)) {
+      // Do not throw through libvorbis' C callbacks. After one reconnect
+      // and retry of the same byte range, report EOF and let TrackPlayer
+      // unwind cleanly.
+      CSPOT_LOG(error, "Failed to read audio chunk at %u after retry",
+                (unsigned int)requestPosition);
       this->lastRequestPosition = 0;
       this->lastRequestCapacity = 0;
       return 0;

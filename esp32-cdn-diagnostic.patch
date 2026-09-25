@@ -1,0 +1,154 @@
+diff --git a/components/spotify/cspot/bell/main/io/HTTPClient.cpp b/components/spotify/cspot/bell/main/io/HTTPClient.cpp
+index e5d5aa2..b6bb376 100644
+--- a/components/spotify/cspot/bell/main/io/HTTPClient.cpp
++++ b/components/spotify/cspot/bell/main/io/HTTPClient.cpp
+@@ -8,6 +8,7 @@
+ #include <stdexcept>  // for runtime_error
+ 
+ #include "BellSocket.h"  // for bell
++#include "BellLogger.h"
+ 
+ using namespace bell;
+ 
+@@ -35,6 +36,9 @@ void HTTPClient::Response::rawRequest(const std::string& url,
+   const char* reqEnd = "\r\n";
+ 
+   for (int attempt = 0;; attempt++) {
++    BELL_LOG(info, "http", "HTTP REQUEST response=%p attempt=%d open=%d good=%d",
++             static_cast<void*>(this), attempt,
++             (int)socketStream.isOpen(), (int)socketStream.good());
+     // Reconnect when the socket was never opened, was closed (for example
+     // a keep-alive connection dropped by the server), or the stream is in
+     // a failed state left over from a previous request
+@@ -71,11 +75,17 @@ void HTTPClient::Response::rawRequest(const std::string& url,
+       socketStream.write((const char*)content.data(), content.size());
+     }
+ 
++    BELL_LOG(info, "http", "HTTP FLUSH begin response=%p", static_cast<void*>(this));
+     socketStream.flush();
++    BELL_LOG(info, "http", "HTTP FLUSH end response=%p good=%d",
++             static_cast<void*>(this), (int)socketStream.good());
+ 
+     // Parse response
+     try {
++      BELL_LOG(info, "http", "HTTP HEADERS begin response=%p", static_cast<void*>(this));
+       readResponseHeaders();
++      BELL_LOG(info, "http", "HTTP HEADERS end response=%p length=%u",
++               static_cast<void*>(this), (unsigned)contentSize);
+       return;
+     } catch (const std::runtime_error&) {
+       // Only retry when the connection itself died (stale keep-alive
+diff --git a/components/spotify/cspot/bell/main/io/TLSSocket.cpp b/components/spotify/cspot/bell/main/io/TLSSocket.cpp
+index 489748d..cddd291 100644
+--- a/components/spotify/cspot/bell/main/io/TLSSocket.cpp
++++ b/components/spotify/cspot/bell/main/io/TLSSocket.cpp
+@@ -6,6 +6,9 @@
+ #include <mbedtls/ssl.h>          // for mbedtls_ssl_conf_authmode, mbedtls_...
+ #include <cstring>                // for strlen, NULL
+ #include <stdexcept>              // for runtime_error
++#ifdef ESP_PLATFORM
++#include "esp_timer.h"
++#endif
+ 
+ #include "BellLogger.h"  // for AbstractLogger, BELL_LOG
+ #include "X509Bundle.h"  // for shouldVerify, attach
+@@ -38,6 +41,8 @@ bell::TLSSocket::TLSSocket() {
+ }
+ 
+ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
++  BELL_LOG(info, "http_tls", "TLS OPEN begin socket=%p host=%s port=%u",
++           static_cast<void*>(this), hostUrl.c_str(), (unsigned)port);
+   int ret;
+   if ((ret = mbedtls_net_connect(&server_fd, hostUrl.c_str(),
+                                  std::to_string(port).c_str(),
+@@ -45,6 +50,9 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
+     BELL_LOG(error, "http_tls", "failed! connect returned %d\n", ret);
+   }
+ 
++  BELL_LOG(info, "http_tls", "TLS CONNECT end socket=%p fd=%d ret=%d",
++           static_cast<void*>(this), server_fd.fd, ret);
++
+   if ((ret = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
+                                          MBEDTLS_SSL_TRANSPORT_STREAM,
+                                          MBEDTLS_SSL_PRESET_DEFAULT)) != 0) {
+@@ -69,20 +77,44 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
+   mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv,
+                       NULL);
+ 
++  BELL_LOG(info, "http_tls", "TLS HANDSHAKE begin socket=%p fd=%d",
++           static_cast<void*>(this), server_fd.fd);
+   while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
+     if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+       BELL_LOG(error, "http_tls", "failed! config returned %d\n", ret);
+       throw std::runtime_error("mbedtls_ssl_handshake error");
+     }
+   }
++  BELL_LOG(info, "http_tls", "TLS HANDSHAKE end socket=%p fd=%d",
++           static_cast<void*>(this), server_fd.fd);
+ }
+ 
+ size_t bell::TLSSocket::read(uint8_t* buf, size_t len) {
+-  return mbedtls_ssl_read(&ssl, buf, len);
++  BELL_LOG(info, "http_tls", "TLS READ begin socket=%p fd=%d want=%u",
++           static_cast<void*>(this), server_fd.fd, (unsigned)len);
++#ifdef ESP_PLATFORM
++  const int64_t started = esp_timer_get_time();
++#endif
++  const int ret = mbedtls_ssl_read(&ssl, buf, len);
++#ifdef ESP_PLATFORM
++  BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d elapsed=%lldms",
++           static_cast<void*>(this), server_fd.fd, ret,
++           (long long)((esp_timer_get_time() - started) / 1000));
++#else
++  BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d",
++           static_cast<void*>(this), server_fd.fd, ret);
++#endif
++  // Diagnostic only: preserve the existing return conversion for this run.
++  return ret;
+ }
+ 
+ size_t bell::TLSSocket::write(uint8_t* buf, size_t len) {
+-  return mbedtls_ssl_write(&ssl, buf, len);
++  BELL_LOG(info, "http_tls", "TLS WRITE begin socket=%p fd=%d want=%u",
++           static_cast<void*>(this), server_fd.fd, (unsigned)len);
++  const int ret = mbedtls_ssl_write(&ssl, buf, len);
++  BELL_LOG(info, "http_tls", "TLS WRITE end socket=%p fd=%d ret=%d",
++           static_cast<void*>(this), server_fd.fd, ret);
++  return ret;
+ }
+ 
+ size_t bell::TLSSocket::poll() {
+diff --git a/components/spotify/cspot/src/CDNAudioFile.cpp b/components/spotify/cspot/src/CDNAudioFile.cpp
+index 970f9c8..44b66a0 100644
+--- a/components/spotify/cspot/src/CDNAudioFile.cpp
++++ b/components/spotify/cspot/src/CDNAudioFile.cpp
+@@ -136,6 +136,9 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
+ 
+     try {
+       auto httpStart = bell::tv::now().ms();
++      CSPOT_LOG(info, "CDN BEGIN response=%p pos=%u want=%u",
++                static_cast<void*>(httpConnection.get()),
++                (unsigned)requestPosition, (unsigned)HTTP_BUFFER_SIZE);
+ 
+       this->httpConnection->get(
+           cdnUrl,
+@@ -145,11 +148,19 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
+       auto headersDone = bell::tv::now().ms();
+ 
+       readCapacity = this->httpConnection->contentLength();
++      CSPOT_LOG(info, "CDN BODY begin response=%p pos=%u expected=%u",
++                static_cast<void*>(httpConnection.get()),
++                (unsigned)requestPosition, (unsigned)readCapacity);
+ 
+       this->httpConnection->stream().read((char*)this->httpBuffer.data(),
+                                           readCapacity);
+ 
+       auto bodyDone = bell::tv::now().ms();
++      CSPOT_LOG(info, "CDN BODY end response=%p got=%lld expected=%u state=%u",
++                static_cast<void*>(httpConnection.get()),
++                (long long)httpConnection->stream().gcount(),
++                (unsigned)readCapacity,
++                (unsigned)httpConnection->stream().rdstate());
+ 
+       auto headerMs = headersDone - httpStart;
+       auto bodyMs = bodyDone - headersDone;

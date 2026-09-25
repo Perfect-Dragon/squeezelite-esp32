@@ -1,5 +1,6 @@
 #include "TrackPlayer.h"
 
+#include <exception>  // for exception
 #include <mutex>        // for mutex, scoped_lock
 #include <string>       // for string
 #include <type_traits>  // for remove_extent_t
@@ -177,8 +178,17 @@ void TrackPlayer::runTask() {
 
       currentTrackStream = track->getAudioFile();
 
-      // Open the stream
-      currentTrackStream->openStream();
+      // Open the stream. Network/TLS failures during header/footer fetch must
+      // not unwind out of the FreeRTOS player task.
+      try {
+        currentTrackStream->openStream();
+      } catch (const std::exception& e) {
+        CSPOT_LOG(error, "Failed to open track stream: %s", e.what());
+        currentSongPlaying = false;
+        currentTrackStream = nullptr;
+        this->eofCallback();
+        continue;
+      }
 
       if (pendingReset || !currentSongPlaying) {
         continue;

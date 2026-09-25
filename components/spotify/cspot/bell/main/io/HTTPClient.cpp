@@ -8,6 +8,7 @@
 #include <stdexcept>  // for runtime_error
 
 #include "BellSocket.h"  // for bell
+#include "BellLogger.h"
 
 using namespace bell;
 
@@ -35,6 +36,9 @@ void HTTPClient::Response::rawRequest(const std::string& url,
   const char* reqEnd = "\r\n";
 
   for (int attempt = 0;; attempt++) {
+    BELL_LOG(info, "http", "HTTP REQUEST response=%p attempt=%d open=%d good=%d",
+             static_cast<void*>(this), attempt,
+             (int)socketStream.isOpen(), (int)socketStream.good());
     // Reconnect when the socket was never opened, was closed (for example
     // a keep-alive connection dropped by the server), or the stream is in
     // a failed state left over from a previous request
@@ -71,11 +75,17 @@ void HTTPClient::Response::rawRequest(const std::string& url,
       socketStream.write((const char*)content.data(), content.size());
     }
 
+    BELL_LOG(info, "http", "HTTP FLUSH begin response=%p", static_cast<void*>(this));
     socketStream.flush();
+    BELL_LOG(info, "http", "HTTP FLUSH end response=%p good=%d",
+             static_cast<void*>(this), (int)socketStream.good());
 
     // Parse response
     try {
+      BELL_LOG(info, "http", "HTTP HEADERS begin response=%p", static_cast<void*>(this));
       readResponseHeaders();
+      BELL_LOG(info, "http", "HTTP HEADERS end response=%p length=%u",
+               static_cast<void*>(this), (unsigned)contentSize);
       return;
     } catch (const std::runtime_error&) {
       // Only retry when the connection itself died (stale keep-alive

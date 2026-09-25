@@ -1,0 +1,391 @@
+diff --git a/components/spotify/cspot/bell/main/io/TLSSocket.cpp b/components/spotify/cspot/bell/main/io/TLSSocket.cpp
+index cddd291..7ea56a1 100644
+--- a/components/spotify/cspot/bell/main/io/TLSSocket.cpp
++++ b/components/spotify/cspot/bell/main/io/TLSSocket.cpp
+@@ -6,6 +6,10 @@
+ #include <mbedtls/ssl.h>          // for mbedtls_ssl_conf_authmode, mbedtls_...
+ #include <cstring>                // for strlen, NULL
+ #include <stdexcept>              // for runtime_error
++
++namespace {
++constexpr uint32_t TLS_READ_TIMEOUT_MS = 3000;
++}
+ #ifdef ESP_PLATFORM
+ #include "esp_timer.h"
+ #endif
+@@ -48,6 +52,7 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
+                                  std::to_string(port).c_str(),
+                                  MBEDTLS_NET_PROTO_TCP)) != 0) {
+     BELL_LOG(error, "http_tls", "failed! connect returned %d\n", ret);
++    throw std::runtime_error("mbedtls_net_connect failed");
+   }
+ 
+   BELL_LOG(info, "http_tls", "TLS CONNECT end socket=%p fd=%d ret=%d",
+@@ -69,13 +74,21 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
+   }
+ 
+   mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+-  mbedtls_ssl_setup(&ssl, &conf);
++
++  // Bound each blocking TLS receive. Without f_recv_timeout, mbedtls_ssl_read()
++  // can wait for the TCP stack for minutes after the Wi-Fi path has gone bad.
++  mbedtls_ssl_conf_read_timeout(&conf, TLS_READ_TIMEOUT_MS);
++
++  if ((ret = mbedtls_ssl_setup(&ssl, &conf)) != 0) {
++    BELL_LOG(error, "http_tls", "failed! ssl_setup returned %d\n", ret);
++    throw std::runtime_error("mbedtls_ssl_setup failed");
++  }
+ 
+   if ((ret = mbedtls_ssl_set_hostname(&ssl, hostUrl.c_str())) != 0) {
+     throw std::runtime_error("mbedtls_ssl_set_hostname failed");
+   }
+   mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv,
+-                      NULL);
++                      mbedtls_net_recv_timeout);
+ 
+   BELL_LOG(info, "http_tls", "TLS HANDSHAKE begin socket=%p fd=%d",
+            static_cast<void*>(this), server_fd.fd);
+@@ -89,7 +102,7 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
+            static_cast<void*>(this), server_fd.fd);
+ }
+ 
+-size_t bell::TLSSocket::read(uint8_t* buf, size_t len) {
++int bell::TLSSocket::read(uint8_t* buf, size_t len) {
+   BELL_LOG(info, "http_tls", "TLS READ begin socket=%p fd=%d want=%u",
+            static_cast<void*>(this), server_fd.fd, (unsigned)len);
+ #ifdef ESP_PLATFORM
+@@ -104,16 +117,29 @@ size_t bell::TLSSocket::read(uint8_t* buf, size_t len) {
+   BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d",
+            static_cast<void*>(this), server_fd.fd, ret);
+ #endif
+-  // Diagnostic only: preserve the existing return conversion for this run.
++  if (ret == MBEDTLS_ERR_SSL_TIMEOUT) {
++    BELL_LOG(error, "http_tls", "TLS read timed out after %u ms",
++             (unsigned)TLS_READ_TIMEOUT_MS);
++  } else if (ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ &&
++             ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
++    BELL_LOG(error, "http_tls", "TLS read failed: %d", ret);
++  }
++
+   return ret;
+ }
+ 
+-size_t bell::TLSSocket::write(uint8_t* buf, size_t len) {
++int bell::TLSSocket::write(uint8_t* buf, size_t len) {
+   BELL_LOG(info, "http_tls", "TLS WRITE begin socket=%p fd=%d want=%u",
+            static_cast<void*>(this), server_fd.fd, (unsigned)len);
+   const int ret = mbedtls_ssl_write(&ssl, buf, len);
+   BELL_LOG(info, "http_tls", "TLS WRITE end socket=%p fd=%d ret=%d",
+            static_cast<void*>(this), server_fd.fd, ret);
++
++  if (ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ &&
++      ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
++    BELL_LOG(error, "http_tls", "TLS write failed: %d", ret);
++  }
++
+   return ret;
+ }
+ 
+diff --git a/components/spotify/cspot/bell/main/io/include/BellSocket.h b/components/spotify/cspot/bell/main/io/include/BellSocket.h
+index 5eff94e..9eb3745 100644
+--- a/components/spotify/cspot/bell/main/io/include/BellSocket.h
++++ b/components/spotify/cspot/bell/main/io/include/BellSocket.h
+@@ -10,8 +10,8 @@ class Socket {
+ 
+   virtual void open(const std::string& host, uint16_t port) = 0;
+   virtual size_t poll() = 0;
+-  virtual size_t write(uint8_t* buf, size_t len) = 0;
+-  virtual size_t read(uint8_t* buf, size_t len) = 0;
++  virtual int write(uint8_t* buf, size_t len) = 0;
++  virtual int read(uint8_t* buf, size_t len) = 0;
+   virtual bool isOpen() = 0;
+   virtual void close() = 0;
+   virtual int getFd() = 0;
+diff --git a/components/spotify/cspot/bell/main/io/include/TCPSocket.h b/components/spotify/cspot/bell/main/io/include/TCPSocket.h
+index 73ae6eb..44e66f1 100644
+--- a/components/spotify/cspot/bell/main/io/include/TCPSocket.h
++++ b/components/spotify/cspot/bell/main/io/include/TCPSocket.h
+@@ -85,12 +85,12 @@ class TCPSocket : public bell::Socket {
+     isClosed = false;
+   }
+ 
+-  size_t read(uint8_t* buf, size_t len) {
+-    return recv(sockFd, (char*)buf, len, 0);
++  int read(uint8_t* buf, size_t len) {
++    return (int)recv(sockFd, (char*)buf, len, 0);
+   }
+ 
+-  size_t write(uint8_t* buf, size_t len) {
+-    return send(sockFd, (char*)buf, len, 0);
++  int write(uint8_t* buf, size_t len) {
++    return (int)send(sockFd, (char*)buf, len, 0);
+   }
+ 
+   size_t poll() {
+diff --git a/components/spotify/cspot/bell/main/io/include/TLSSocket.h b/components/spotify/cspot/bell/main/io/include/TLSSocket.h
+index c3c43a5..7ab04de 100644
+--- a/components/spotify/cspot/bell/main/io/include/TLSSocket.h
++++ b/components/spotify/cspot/bell/main/io/include/TLSSocket.h
+@@ -34,8 +34,8 @@ class TLSSocket : public bell::Socket {
+ 
+   void open(const std::string& host, uint16_t port);
+ 
+-  size_t read(uint8_t* buf, size_t len);
+-  size_t write(uint8_t* buf, size_t len);
++  int read(uint8_t* buf, size_t len);
++  int write(uint8_t* buf, size_t len);
+   size_t poll();
+   bool isOpen();
+ 
+diff --git a/components/spotify/cspot/include/CDNAudioFile.h b/components/spotify/cspot/include/CDNAudioFile.h
+index 5cc7ce7..9e75727 100644
+--- a/components/spotify/cspot/include/CDNAudioFile.h
++++ b/components/spotify/cspot/include/CDNAudioFile.h
+@@ -85,6 +85,10 @@ class CDNAudioFile {
+   std::string cdnUrl;
+   std::vector<uint8_t> audioKey;
+ 
++  bool fetchHttpRange(const bell::HTTPClient::ValueHeader& range,
++                      uint8_t* dst, size_t dstCapacity,
++                      size_t& readCapacity, const char* label,
++                      size_t logPosition);
+   void decrypt(uint8_t* dst, size_t nbytes, size_t pos);
+ };
+ }  // namespace cspot
+diff --git a/components/spotify/cspot/src/CDNAudioFile.cpp b/components/spotify/cspot/src/CDNAudioFile.cpp
+index 44b66a0..bbfd2a6 100644
+--- a/components/spotify/cspot/src/CDNAudioFile.cpp
++++ b/components/spotify/cspot/src/CDNAudioFile.cpp
+@@ -41,15 +41,105 @@ void CDNAudioFile::seek(size_t newPos) {
+   this->position = newPos;
+ }
+ 
++bool CDNAudioFile::fetchHttpRange(
++    const bell::HTTPClient::ValueHeader& range, uint8_t* dst,
++    size_t dstCapacity, size_t& readCapacity, const char* label,
++    size_t logPosition) {
++  constexpr int HTTP_ATTEMPTS = 2;
++
++  readCapacity = 0;
++
++  for (int attempt = 0; attempt < HTTP_ATTEMPTS; ++attempt) {
++    try {
++      if (!this->httpConnection) {
++        this->httpConnection =
++            std::make_unique<bell::HTTPClient::Response>();
++        this->httpConnection->connect(this->cdnUrl);
++      }
++
++      auto httpStart = bell::tv::now().ms();
++
++      CSPOT_LOG(info, "CDN %s begin response=%p pos=%u attempt=%d",
++                label, static_cast<void*>(httpConnection.get()),
++                (unsigned)logPosition, attempt + 1);
++
++      this->httpConnection->get(this->cdnUrl, {range});
++
++      auto headersDone = bell::tv::now().ms();
++
++      readCapacity = this->httpConnection->contentLength();
++
++      if (readCapacity == 0 || readCapacity > dstCapacity) {
++        throw std::runtime_error("Invalid HTTP audio range length");
++      }
++
++      CSPOT_LOG(info, "CDN %s body begin response=%p pos=%u expected=%u",
++                label, static_cast<void*>(httpConnection.get()),
++                (unsigned)logPosition, (unsigned)readCapacity);
++
++      this->httpConnection->stream().read((char*)dst, readCapacity);
++
++      auto bodyDone = bell::tv::now().ms();
++
++      auto headerMs = headersDone - httpStart;
++      auto bodyMs = bodyDone - headersDone;
++      auto totalMs = bodyDone - httpStart;
++
++      CSPOT_LOG(info, "CDN %s body end response=%p got=%lld expected=%u state=%u",
++                label, static_cast<void*>(httpConnection.get()),
++                (long long)httpConnection->stream().gcount(),
++                (unsigned)readCapacity,
++                (unsigned)httpConnection->stream().rdstate());
++
++      if (totalMs > 100 || attempt > 0) {
++        CSPOT_LOG(info,
++                  "CDN %s pos=%u size=%u attempt=%d headers=%lldms "
++                  "body=%lldms total=%lldms",
++                  label, (unsigned int)logPosition,
++                  (unsigned int)readCapacity, attempt + 1,
++                  (long long)headerMs, (long long)bodyMs,
++                  (long long)totalMs);
++      }
++
++      if (this->httpConnection->stream().gcount() !=
++          (std::streamsize)readCapacity) {
++        throw std::runtime_error("Short read of audio range body");
++      }
++
++      return true;
++    } catch (const std::exception& e) {
++      CSPOT_LOG(error,
++                "CDN %s pos=%u attempt=%d/%d failed: %s",
++                label, (unsigned int)logPosition, attempt + 1,
++                HTTP_ATTEMPTS, e.what());
++
++      // Drop the entire HTTP/TLS object. A timed-out keep-alive
++      // connection must not be reused for the retry.
++      this->httpConnection.reset();
++      readCapacity = 0;
++
++      if (attempt + 1 < HTTP_ATTEMPTS) {
++        BELL_SLEEP_MS(50);
++      }
++    }
++  }
++
++  return false;
++}
++
+ void CDNAudioFile::openStream() {
+   CSPOT_LOG(info, "Opening HTTP stream to %s", this->cdnUrl.c_str());
+ 
+-  // Open connection, read first 128 bytes
+-  this->httpConnection = bell::HTTPClient::get(
+-      this->cdnUrl,
+-      {bell::HTTPClient::RangeHeader::range(0, OPUS_HEADER_SIZE - 1)});
++  size_t headerCapacity = 0;
++
++  if (!fetchHttpRange(
++          bell::HTTPClient::RangeHeader::range(0, OPUS_HEADER_SIZE - 1),
++          this->header.data(), this->header.size(), headerCapacity,
++          "HEADER", 0) ||
++      headerCapacity != this->header.size()) {
++    throw std::runtime_error("Failed to fetch complete audio header");
++  }
+ 
+-  this->httpConnection->stream().read((char*)header.data(), OPUS_HEADER_SIZE);
+   this->totalFileSize =
+       this->httpConnection->totalLength() - SPOTIFY_OPUS_HEADER;
+ 
+@@ -62,11 +152,16 @@ void CDNAudioFile::openStream() {
+ 
+   this->footer = std::vector<uint8_t>(
+       this->totalFileSize - footerStartLocation + SPOTIFY_OPUS_HEADER);
+-  this->httpConnection->get(
+-      cdnUrl, {bell::HTTPClient::RangeHeader::last(footer.size())});
+ 
+-  this->httpConnection->stream().read((char*)footer.data(),
+-                                      this->footer.size());
++  size_t footerCapacity = 0;
++
++  if (!fetchHttpRange(
++          bell::HTTPClient::RangeHeader::last(this->footer.size()),
++          this->footer.data(), this->footer.size(), footerCapacity,
++          "FOOTER", footerStartLocation) ||
++      footerCapacity != this->footer.size()) {
++    throw std::runtime_error("Failed to fetch complete audio footer");
++  }
+ 
+   this->decrypt(footer.data(), footer.size(), footerStartLocation);
+   CSPOT_LOG(info, "Header and footer bytes received");
+@@ -134,59 +229,16 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
+ 
+     size_t readCapacity = 0;
+ 
+-    try {
+-      auto httpStart = bell::tv::now().ms();
+-      CSPOT_LOG(info, "CDN BEGIN response=%p pos=%u want=%u",
+-                static_cast<void*>(httpConnection.get()),
+-                (unsigned)requestPosition, (unsigned)HTTP_BUFFER_SIZE);
+-
+-      this->httpConnection->get(
+-          cdnUrl,
+-          {bell::HTTPClient::RangeHeader::range(
+-              requestPosition, requestPosition + HTTP_BUFFER_SIZE - 1)});
+-      
+-      auto headersDone = bell::tv::now().ms();
+-
+-      readCapacity = this->httpConnection->contentLength();
+-      CSPOT_LOG(info, "CDN BODY begin response=%p pos=%u expected=%u",
+-                static_cast<void*>(httpConnection.get()),
+-                (unsigned)requestPosition, (unsigned)readCapacity);
+-
+-      this->httpConnection->stream().read((char*)this->httpBuffer.data(),
+-                                          readCapacity);
+-
+-      auto bodyDone = bell::tv::now().ms();
+-      CSPOT_LOG(info, "CDN BODY end response=%p got=%lld expected=%u state=%u",
+-                static_cast<void*>(httpConnection.get()),
+-                (long long)httpConnection->stream().gcount(),
+-                (unsigned)readCapacity,
+-                (unsigned)httpConnection->stream().rdstate());
+-
+-      auto headerMs = headersDone - httpStart;
+-      auto bodyMs = bodyDone - headersDone;
+-      auto totalMs = bodyDone - httpStart;
+-
+-      if (totalMs > 100) {
+-          CSPOT_LOG(info,
+-                    "CDN READ pos=%u size=%u headers=%lldms body=%lldms total=%lldms",
+-                    (unsigned int)requestPosition,
+-                    (unsigned int)readCapacity,
+-                    (long long)headerMs,
+-                    (long long)bodyMs,
+-                    (long long)totalMs);
+-      }
+-
+-      if (this->httpConnection->stream().gcount() !=
+-          (std::streamsize)readCapacity) {
+-        throw std::runtime_error("Short read of audio chunk body");
+-      }
+-    } catch (const std::exception& e) {
+-      // A network failure must not propagate through the vorbis C call
+-      // frames above us (TrackPlayer::runTask has no handler). Invalidate
+-      // the cache window and report EOF so the player survives and moves
+-      // on to the next track.
+-      CSPOT_LOG(error, "Failed to read audio chunk at %u: %s",
+-                (unsigned int)requestPosition, e.what());
++    if (!fetchHttpRange(
++            bell::HTTPClient::RangeHeader::range(
++                requestPosition, requestPosition + HTTP_BUFFER_SIZE - 1),
++            this->httpBuffer.data(), this->httpBuffer.size(),
++            readCapacity, "READ", requestPosition)) {
++      // Do not throw through libvorbis' C callbacks. After one reconnect
++      // and retry of the same byte range, report EOF and let TrackPlayer
++      // unwind cleanly.
++      CSPOT_LOG(error, "Failed to read audio chunk at %u after retry",
++                (unsigned int)requestPosition);
+       this->lastRequestPosition = 0;
+       this->lastRequestCapacity = 0;
+       return 0;
+diff --git a/components/spotify/cspot/src/TrackPlayer.cpp b/components/spotify/cspot/src/TrackPlayer.cpp
+index 1103ccc..186fbad 100644
+--- a/components/spotify/cspot/src/TrackPlayer.cpp
++++ b/components/spotify/cspot/src/TrackPlayer.cpp
+@@ -1,5 +1,6 @@
+ #include "TrackPlayer.h"
+ 
++#include <exception>  // for exception
+ #include <mutex>        // for mutex, scoped_lock
+ #include <string>       // for string
+ #include <type_traits>  // for remove_extent_t
+@@ -177,8 +178,17 @@ void TrackPlayer::runTask() {
+ 
+       currentTrackStream = track->getAudioFile();
+ 
+-      // Open the stream
+-      currentTrackStream->openStream();
++      // Open the stream. Network/TLS failures during header/footer fetch must
++      // not unwind out of the FreeRTOS player task.
++      try {
++        currentTrackStream->openStream();
++      } catch (const std::exception& e) {
++        CSPOT_LOG(error, "Failed to open track stream: %s", e.what());
++        currentSongPlaying = false;
++        currentTrackStream = nullptr;
++        this->eofCallback();
++        continue;
++      }
+ 
+       if (pendingReset || !currentSongPlaying) {
+         continue;
