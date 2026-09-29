@@ -511,7 +511,19 @@ static int _i2s_write_frames(frames_t out_frames, bool silence, s32_t gainL, s32
         }
 
         _apply_gain(outputbuf,out_frames,gainL,gainR,flags);
+
+		u8_t *dst = obuf + oframes * BYTES_PER_FRAME;
+
         memcpy(obuf + oframes * BYTES_PER_FRAME,outputbuf->readp,out_frames * BYTES_PER_FRAME);
+
+		    /* Swap stereo channels only at the final hardware-output stage. */
+		ISAMPLE_T *samples = (ISAMPLE_T *)(void *)dst;
+
+		for (frames_t i = 0; i < out_frames; i++) {
+			ISAMPLE_T tmp = samples[i * 2];
+			samples[i * 2] = samples[i * 2 + 1];
+			samples[i * 2 + 1] = tmp;
+		}
 
     } else {
         memcpy(obuf + oframes * BYTES_PER_FRAME,silencebuf,out_frames * BYTES_PER_FRAME);

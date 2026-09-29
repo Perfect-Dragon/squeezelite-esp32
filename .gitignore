@@ -19,3 +19,6 @@ envfile.txt
 artifacts
 web-installer
 client_info.h
+
+log.squeezelite.*.txt
+

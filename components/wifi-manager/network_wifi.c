@@ -616,6 +616,20 @@ esp_err_t network_wifi_set_sta_mode() {
         err = esp_wifi_start();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Error starting wifi: %s", esp_err_to_name(err));
+        } else {
+            // Added: disable power saving and verify the setting.
+            esp_err_t ps_err = esp_wifi_set_ps(WIFI_PS_NONE);
+            if (ps_err != ESP_OK) {
+                ESP_LOGE(TAG, "Disabling WiFi power save failed: %s", esp_err_to_name(ps_err));
+            } else {
+                wifi_ps_type_t ps;
+                ps_err = esp_wifi_get_ps(&ps);
+                if (ps_err == ESP_OK) {
+                    ESP_LOGI(TAG, "WiFi power save verified: %d", (int)ps);
+                } else {
+                    ESP_LOGE(TAG, "Reading WiFi power save failed: %s", esp_err_to_name(ps_err));
+                }
+            }
         }
     }
     return err;
