@@ -103,20 +103,20 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
 }
 
 int bell::TLSSocket::read(uint8_t* buf, size_t len) {
-  BELL_LOG(info, "http_tls", "TLS READ begin socket=%p fd=%d want=%u",
-           static_cast<void*>(this), server_fd.fd, (unsigned)len);
-#ifdef ESP_PLATFORM
-  const int64_t started = esp_timer_get_time();
-#endif
+  // BELL_LOG(info, "http_tls", "TLS READ begin socket=%p fd=%d want=%u",
+  //          static_cast<void*>(this), server_fd.fd, (unsigned)len);
+// #ifdef ESP_PLATFORM
+//   const int64_t started = esp_timer_get_time();
+// #endif
   const int ret = mbedtls_ssl_read(&ssl, buf, len);
-#ifdef ESP_PLATFORM
-  BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d elapsed=%lldms",
-           static_cast<void*>(this), server_fd.fd, ret,
-           (long long)((esp_timer_get_time() - started) / 1000));
-#else
-  BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d",
-           static_cast<void*>(this), server_fd.fd, ret);
-#endif
+// #ifdef ESP_PLATFORM
+//   BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d elapsed=%lldms",
+//            static_cast<void*>(this), server_fd.fd, ret,
+//            (long long)((esp_timer_get_time() - started) / 1000));
+// #else
+//   // BELL_LOG(info, "http_tls", "TLS READ end socket=%p fd=%d ret=%d",
+//   //          static_cast<void*>(this), server_fd.fd, ret);
+// #endif
   if (ret == MBEDTLS_ERR_SSL_TIMEOUT) {
     BELL_LOG(error, "http_tls", "TLS read timed out after %u ms",
              (unsigned)TLS_READ_TIMEOUT_MS);
@@ -129,11 +129,11 @@ int bell::TLSSocket::read(uint8_t* buf, size_t len) {
 }
 
 int bell::TLSSocket::write(uint8_t* buf, size_t len) {
-  BELL_LOG(info, "http_tls", "TLS WRITE begin socket=%p fd=%d want=%u",
-           static_cast<void*>(this), server_fd.fd, (unsigned)len);
+  // BELL_LOG(info, "http_tls", "TLS WRITE begin socket=%p fd=%d want=%u",
+  //          static_cast<void*>(this), server_fd.fd, (unsigned)len);
   const int ret = mbedtls_ssl_write(&ssl, buf, len);
-  BELL_LOG(info, "http_tls", "TLS WRITE end socket=%p fd=%d ret=%d",
-           static_cast<void*>(this), server_fd.fd, ret);
+  // BELL_LOG(info, "http_tls", "TLS WRITE end socket=%p fd=%d ret=%d",
+  //          static_cast<void*>(this), server_fd.fd, ret);
 
   if (ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ &&
       ret != MBEDTLS_ERR_SSL_WANT_WRITE) {

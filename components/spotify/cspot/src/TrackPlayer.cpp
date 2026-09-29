@@ -214,6 +214,8 @@ void TrackPlayer::runTask() {
       track->loading = true;
 
       CSPOT_LOG(info, "Playing");
+      size_t pcmBytesDelivered = 0;
+      size_t nextPcmProgressLog = 1024 * 1024;
 
       while (!eof && currentSongPlaying) {
         // Execute seek if needed
@@ -227,19 +229,8 @@ void TrackPlayer::runTask() {
           VORBIS_SEEK(&vorbisFile, seekPosition);
         }
 
-        auto decodeStart = bell::tv::now().ms();
-
         long ret = VORBIS_READ(&vorbisFile, (char*)&pcmBuffer[0],
                                pcmBuffer.size(), &currentSection);
-
-        auto decodeMs = bell::tv::now().ms() - decodeStart;
-
-        if (decodeMs > 50) {
-            CSPOT_LOG(info,
-                      "SLOW VORBIS_READ: %lldms, PCM=%d bytes",
-                      (long long)decodeMs,
-                      (int)ret);
-        }
 
         if (ret == 0) {
           CSPOT_LOG(info, "EOF");
@@ -250,7 +241,19 @@ void TrackPlayer::runTask() {
           currentSongPlaying = false;
         } else {
           if (this->dataCallback != nullptr) {
+            pcmBytesDelivered += static_cast<size_t>(ret);
+            if (pcmBytesDelivered >= nextPcmProgressLog) {
+              CSPOT_LOG(info, "PCM progress bytes=%u position=%u",
+                        (unsigned)pcmBytesDelivered,
+                        (unsigned)currentTrackStream->getPosition());
+              nextPcmProgressLog += 1024 * 1024;
+            }
+
             auto toWrite = ret;
+            int writeCalls = 0;
+            int totalWritten = 0;
+            long long maxWriteMs = 0;
+            bool partialWrite = false;
 
             while (!eof && currentSongPlaying && !pendingReset && toWrite > 0) {
               int written = 0;
@@ -263,19 +266,28 @@ void TrackPlayer::runTask() {
                 written = dataCallback(pcmBuffer.data() + (ret - toWrite),
                                        toWrite, track->identifier);
 
-              auto writeMs = bell::tv::now().ms() - writeStart;
-
-              if (writeMs > 20) {
-                  CSPOT_LOG(info, "SLOW PCM WRITE: %lldms written=%d requested=%d",
-                            (long long)writeMs,
-                            written,
-                            toWrite);
-              }
+                auto writeMs = bell::tv::now().ms() - writeStart;
+                ++writeCalls;
+                totalWritten += written;
+                if (writeMs > maxWriteMs) {
+                  maxWriteMs = writeMs;
+                }
+                if (written < toWrite) {
+                  partialWrite = true;
+                }
               }
               if (written == 0) {
                 BELL_SLEEP_MS(50);
               }
               toWrite -= written;
+            }
+
+            if (partialWrite || maxWriteMs > 100) {
+              CSPOT_LOG(info,
+                        "PCM delivery requested=%d written=%d calls=%d "
+                        "maxWrite=%lldms partial=%d",
+                        (int)ret, totalWritten, writeCalls,
+                        maxWriteMs, partialWrite ? 1 : 0);
             }
           }
         }

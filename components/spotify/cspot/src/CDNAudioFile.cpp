@@ -57,15 +57,7 @@ bool CDNAudioFile::fetchHttpRange(
         this->httpConnection->connect(this->cdnUrl);
       }
 
-      auto httpStart = bell::tv::now().ms();
-
-      CSPOT_LOG(info, "CDN %s begin response=%p pos=%u attempt=%d",
-                label, static_cast<void*>(httpConnection.get()),
-                (unsigned)logPosition, attempt + 1);
-
       this->httpConnection->get(this->cdnUrl, {range});
-
-      auto headersDone = bell::tv::now().ms();
 
       readCapacity = this->httpConnection->contentLength();
 
@@ -73,33 +65,7 @@ bool CDNAudioFile::fetchHttpRange(
         throw std::runtime_error("Invalid HTTP audio range length");
       }
 
-      CSPOT_LOG(info, "CDN %s body begin response=%p pos=%u expected=%u",
-                label, static_cast<void*>(httpConnection.get()),
-                (unsigned)logPosition, (unsigned)readCapacity);
-
       this->httpConnection->stream().read((char*)dst, readCapacity);
-
-      auto bodyDone = bell::tv::now().ms();
-
-      auto headerMs = headersDone - httpStart;
-      auto bodyMs = bodyDone - headersDone;
-      auto totalMs = bodyDone - httpStart;
-
-      CSPOT_LOG(info, "CDN %s body end response=%p got=%lld expected=%u state=%u",
-                label, static_cast<void*>(httpConnection.get()),
-                (long long)httpConnection->stream().gcount(),
-                (unsigned)readCapacity,
-                (unsigned)httpConnection->stream().rdstate());
-
-      if (totalMs > 100 || attempt > 0) {
-        CSPOT_LOG(info,
-                  "CDN %s pos=%u size=%u attempt=%d headers=%lldms "
-                  "body=%lldms total=%lldms",
-                  label, (unsigned int)logPosition,
-                  (unsigned int)readCapacity, attempt + 1,
-                  (long long)headerMs, (long long)bodyMs,
-                  (long long)totalMs);
-      }
 
       if (this->httpConnection->stream().gcount() !=
           (std::streamsize)readCapacity) {

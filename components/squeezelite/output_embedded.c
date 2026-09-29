@@ -107,7 +107,7 @@ void output_init_embedded(log_level level, char *device, unsigned output_buf_siz
 	
 	output_visu_init(level);
 
-	local_visualizer_start();
+	// local_visualizer_start(); // disabled for Spotify audio-path A/B test
 	
 	LOG_INFO("init completed.");
 }	
@@ -177,6 +177,5 @@ bool output_stopped(void) {
 	return state <= OUTPUT_STOPPED;
 }	
 	
-
 
 

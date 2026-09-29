@@ -65,7 +65,9 @@ extern log_level loglevel;
 /****************************************************************************************
  * Common sink data handler
  */
-static uint32_t sink_data_handler(const uint8_t *data, uint32_t len, int retries)
+static uint32_t sink_data_handler(const uint8_t *data, uint32_t len,
+                                  int retries, unsigned wait_ms,
+                                  bool drop_on_timeout)
 {
     size_t bytes, space;
     uint32_t written = 0;    
@@ -103,18 +105,18 @@ static uint32_t sink_data_handler(const uint8_t *data, uint32_t len, int retries
 				
 		// allow i2s to empty the buffer if needed
 		if (len && !space) {
-            if (!retries) break;
+			if (!retries) break;
 			wait--;
-			UNLOCK_O; usleep(50000); LOCK_O;
+			UNLOCK_O; usleep(wait_ms * 1000); LOCK_O;
 		}
 	}	
 
-	if (!wait) {
+	if (!wait && drop_on_timeout) {
         // re-align the buffer according to what we threw away
         _buf_inc_writep(outputbuf, outputbuf->size - (BYTES_PER_FRAME - (len % BYTES_PER_FRAME)));
 		LOG_WARN("Waited too long, dropping frames %d", len);
 	}
-    
+
     UNLOCK_O;
     
     return written;
@@ -125,7 +127,7 @@ static uint32_t sink_data_handler(const uint8_t *data, uint32_t len, int retries
  */
 #if CONFIG_BT_SINK
 static void bt_sink_data_handler(const uint8_t *data, uint32_t len) {
-    sink_data_handler(data, len, 10);
+    sink_data_handler(data, len, 10, 50, true);
 }    
 
 /****************************************************************************************
@@ -207,7 +209,7 @@ static void raop_sink_data_handler(const uint8_t *data, uint32_t len, u32_t play
 	raop_sync.playtime = playtime;
 	raop_sync.len = len;
 
-	sink_data_handler(data, len, 10);
+	sink_data_handler(data, len, 10, 50, true);
 }	
 
 /****************************************************************************************
@@ -349,7 +351,7 @@ static bool raop_sink_cmd_handler(raop_event_t event, va_list args)
  */
 #if CONFIG_CSPOT_SINK
 static uint32_t cspot_sink_data_handler(const uint8_t *data, uint32_t len) {
-    return sink_data_handler(data, len, 0);
+    return sink_data_handler(data, len, 100, 1, false);
 }    
 
 /****************************************************************************************

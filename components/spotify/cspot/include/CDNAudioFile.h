@@ -57,7 +57,10 @@ class CDNAudioFile {
   const int OPUS_FOOTER_PREFFERED = 1024 * 12;  // 12K should be safe
   const int SEEK_MARGIN_SIZE = 1024 * 4;
 
-  const int HTTP_BUFFER_SIZE = 1024 * 64;
+  // Keep a sequential read-ahead window so normal playback does not block on
+  // a new TLS/HTTP request at short compressed-audio intervals. Seeking still
+  // invalidates this cache through enableRequestMargin and the existing range path.
+  const int HTTP_BUFFER_SIZE = 1024 * 256;
   const int SPOTIFY_OPUS_HEADER = 167;
 
   // Used to store opus metadata, speeds up read

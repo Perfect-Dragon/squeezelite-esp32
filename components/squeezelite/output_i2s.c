@@ -8,7 +8,7 @@
  *  https://opensource.org/licenses/MIT
  *
  */
- 
+
 /* 
 Synchronisation is a bit of a hack with i2s. The esp32 driver is always
 full when it starts, so there is a delay of the total length of buffers.
@@ -442,16 +442,12 @@ void output_init_i2s(log_level level, char *device, unsigned output_buf_size, ch
 	adac->headset(jack_inserted_svc());	
     
     // do we want stats
-/* 	p = config_alloc_get_default(NVS_TYPE_STR, "stats", "n", 0);
+	p = config_alloc_get_default(NVS_TYPE_STR, "stats", "n", 0);
 	if (p && (*p == '1' || *p == 'Y' || *p == 'y')) {
         pseudo_idle_chain = pseudo_idle_svc;
         pseudo_idle_svc = i2s_stats;
     }
-    free(p); */
-
-	// TEMP: force I2S statistics on without touching NVS
-	pseudo_idle_chain = pseudo_idle_svc;
-	pseudo_idle_svc = i2s_stats;
+    free(p);
 
     // register a callback for inactivity
     i2s_idle_since = pdTICKS_TO_MS(xTaskGetTickCount());    
@@ -496,43 +492,26 @@ bool output_volume_i2s(unsigned left, unsigned right) {
  * Write frames to the output buffer
  */
 static int _i2s_write_frames(frames_t out_frames, bool silence, s32_t gainL, s32_t gainR, u8_t flags,
-                             s32_t cross_gain_in, s32_t cross_gain_out, ISAMPLE_T **cross_ptr) {
-
-    if (!silence) {
-        if (output.fade == FADE_ACTIVE && output.fade_dir == FADE_CROSS && *cross_ptr) {
-            _apply_cross(outputbuf,out_frames,cross_gain_in,cross_gain_out,cross_ptr);
+								s32_t cross_gain_in, s32_t cross_gain_out, ISAMPLE_T **cross_ptr) {
+	if (!silence) {
+		if (output.fade == FADE_ACTIVE && output.fade_dir == FADE_CROSS && *cross_ptr) {
+			_apply_cross(outputbuf, out_frames, cross_gain_in, cross_gain_out, cross_ptr);
         }
 
-        /*
-         * Feed visualizer BEFORE volume gain is applied.
-         */
-        if (_buf_used(outputbuf) > BYTES_PER_FRAME * output.current_sample_rate / 2) {
-            output_visu_export(outputbuf->readp,out_frames,output.current_sample_rate,false,FIXED_ONE);
-        }
+		_apply_gain(outputbuf, out_frames, gainL, gainR, flags);
+		memcpy(obuf + oframes * BYTES_PER_FRAME, outputbuf->readp, out_frames * BYTES_PER_FRAME);
+	} else {
+		memcpy(obuf + oframes * BYTES_PER_FRAME, silencebuf, out_frames * BYTES_PER_FRAME);
+	}
 
-        _apply_gain(outputbuf,out_frames,gainL,gainR,flags);
+	// don't update visu if we don't have enough data in buffer (500 ms)
+	if (silence || _buf_used(outputbuf) >  BYTES_PER_FRAME * output.current_sample_rate / 2) {
+		output_visu_export(obuf + oframes * BYTES_PER_FRAME, out_frames, output.current_sample_rate, silence, (gainL + gainR) / 2);
+	}
 
-		u8_t *dst = obuf + oframes * BYTES_PER_FRAME;
+	oframes += out_frames;
 
-        memcpy(obuf + oframes * BYTES_PER_FRAME,outputbuf->readp,out_frames * BYTES_PER_FRAME);
-
-		    /* Swap stereo channels only at the final hardware-output stage. */
-		ISAMPLE_T *samples = (ISAMPLE_T *)(void *)dst;
-
-		for (frames_t i = 0; i < out_frames; i++) {
-			ISAMPLE_T tmp = samples[i * 2];
-			samples[i * 2] = samples[i * 2 + 1];
-			samples[i * 2 + 1] = tmp;
-		}
-
-    } else {
-        memcpy(obuf + oframes * BYTES_PER_FRAME,silencebuf,out_frames * BYTES_PER_FRAME);
-        output_visu_export(obuf + oframes * BYTES_PER_FRAME,out_frames,output.current_sample_rate,true,FIXED_ONE);
-    }
-
-    oframes += out_frames;
-
-    return out_frames;
+	return out_frames;
 }
 
 /****************************************************************************************
