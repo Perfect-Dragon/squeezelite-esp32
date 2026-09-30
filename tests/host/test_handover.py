@@ -59,6 +59,10 @@ static char *ltrim(char *s) {
     while (isspace((unsigned char)*s)) ++s;
     return s;
 }
+static char *kd_lookup(key_data_t *kd, char *key) {
+    for (int i = 0; kd[i].key; ++i) if (!strcasecmp(kd[i].key, key)) return kd[i].data;
+    return NULL;
+}
 static void kd_free(key_data_t *kd) {
     for (int i = 0; kd[i].key; ++i) { free(kd[i].key); free(kd[i].data); }
     kd[0].key = NULL;
@@ -101,7 +105,19 @@ int main(void) {
     check("999999999999999999999999", 0, 0, false);
     check("abc", 0, 0, false);
     check("12junk", 0, 0, false);
-    puts("PASS: 9 RTSP body/allocation cases");
+    // Large unused artwork must be drained even when body allocation fails.
+    lines[0] = "SET_PARAMETER / RTSP/1.0";
+    lines[1] = "Content-Type: image/jpeg";
+    lines[2] = "Content-Length: 180224";
+    lines[3] = "";
+    line_index = 0; remaining = 180224; fail_alloc = 1; allocation_requested = 0;
+    char method[16], *body = NULL;
+    key_data_t headers[16] = {{0}};
+    int len;
+    assert(http_parse(0, method, headers, &body, &len));
+    assert(!body && !len && !remaining && !allocation_requested);
+    kd_free(headers);
+    puts("PASS: 10 RTSP cases, including allocation-free artwork draining");
 }
 '''
 

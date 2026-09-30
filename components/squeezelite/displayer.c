@@ -262,6 +262,10 @@ static int local_title_offset = 0;
 static int local_title_max_offset = 0;
 
 static TickType_t local_title_next_move = 0;
+static uint32_t local_elapsed_ms, local_duration_ms;
+static TickType_t local_progress_tick;
+static bool local_playing, local_progress_dirty;
+static int local_progress_pixels = -1;
 
 static void server(in_addr_t ip, u16_t hport, u16_t cport);
 static void sendSETD(u16_t width, u16_t height, u16_t led_config);
@@ -1479,6 +1483,54 @@ void displayer_local_title(const char *title) {
     }
 }
 
+// These helpers and the renderer share displayer.mutex; no display work is
+// performed on the AirPlay receive task.
+static uint32_t local_elapsed_now(TickType_t now) {
+    uint64_t elapsed = local_elapsed_ms;
+    if (local_playing) elapsed += pdTICKS_TO_MS((TickType_t)(now - local_progress_tick));
+    return elapsed < local_duration_ms ? elapsed : local_duration_ms;
+}
+
+void displayer_local_progress(uint32_t elapsed_ms, uint32_t duration_ms) {
+    if (!display || !displayer.mutex) return;
+    xSemaphoreTake(displayer.mutex, portMAX_DELAY);
+    local_duration_ms = duration_ms;
+    local_elapsed_ms = min(elapsed_ms, duration_ms);
+    local_progress_tick = xTaskGetTickCount();
+    local_progress_dirty = true;
+    displayer.wake = 0;
+    xSemaphoreGive(displayer.mutex);
+    if (displayer.task) vTaskResume(displayer.task);
+}
+
+void displayer_local_playing(bool playing) {
+    if (!display || !displayer.mutex) return;
+    xSemaphoreTake(displayer.mutex, portMAX_DELAY);
+    TickType_t now = xTaskGetTickCount();
+    local_elapsed_ms = local_elapsed_now(now);
+    local_progress_tick = now;
+    local_playing = playing;
+    xSemaphoreGive(displayer.mutex);
+}
+
+static void local_progress_draw(void) {
+    const int width = GDS_GetWidth(display) - 2 * LOCAL_TITLE_MARGIN;
+    if (width <= 0 || GDS_GetHeight(display) < 80) return;
+    int pixels = local_duration_ms ?
+        (uint64_t)local_elapsed_now(xTaskGetTickCount()) * width / local_duration_ms : 0;
+    if (!local_progress_dirty && pixels == local_progress_pixels) return;
+    GDS_ClearWindow(display, LOCAL_TITLE_MARGIN, 64,
+                    LOCAL_TITLE_MARGIN + width - 1, 69, GDS_COLOR_BLACK);
+    if (local_duration_ms) {
+        GDS_DrawLine(display, LOCAL_TITLE_MARGIN, 69,
+                     LOCAL_TITLE_MARGIN + width - 1, 69, GDS_COLOR_WHITE);
+        if (pixels) GDS_ClearWindow(display, LOCAL_TITLE_MARGIN, 64,
+                    LOCAL_TITLE_MARGIN + pixels - 1, 67, GDS_COLOR_WHITE);
+    }
+    local_progress_pixels = pixels;
+    local_progress_dirty = false;
+}
+
 static void local_title_draw(void) {
     if (!local_title_dirty || !display) {
         return;
@@ -1533,7 +1585,7 @@ static void local_title_draw(void) {
         x = (screen_width - text_width) / 2;
     }
 
-    int y = (header_height - font_height) / 2;
+    int y = (64 - font_height) / 2;
 
     GDS_FontDrawString(
         display,
@@ -1552,6 +1604,7 @@ static void local_title_draw(void) {
     }
 
     local_title_dirty = false;
+    local_progress_dirty = true;
 }
 
 static void displayer_task(void *args) {
@@ -1648,6 +1701,7 @@ static void displayer_task(void *args) {
 		if (local_title_dirty && displayer.owned) {
 			local_title_draw();
 		}
+		if (display && displayer.owned) local_progress_draw();
 		
 		// need to make sure we own display
 		if (display && displayer.owned) GDS_Update(display);

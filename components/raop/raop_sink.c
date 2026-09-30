@@ -112,37 +112,45 @@ static bool cmd_handler(raop_event_t event, ...) {
 	switch(event) {
 	case RAOP_SETUP:
 		actrls_set(controls, false, NULL, actrls_ir_action);
-		displayer_control(DISPLAYER_ACTIVATE, "AIRPLAY", true);
-        displayer_artwork(NULL);
+		displayer_control(DISPLAYER_SHUTDOWN);
+		local_visualizer_start();
+		displayer_local_playing(false);
+		displayer_local_progress(0, 0);
+		displayer_local_title("AirPlay");
 		break;
 	case RAOP_PLAY:
-		displayer_control(DISPLAYER_TIMER_RUN);
+		displayer_local_playing(true);
 		break;		
 	case RAOP_FLUSH:
-		displayer_control(DISPLAYER_TIMER_PAUSE);
+		displayer_local_playing(false);
 		break;
     case RAOP_STALLED:
         raop_abort(raop);
         actrls_unset();
-        displayer_control(DISPLAYER_SHUTDOWN);
+        displayer_local_playing(false);
+        displayer_local_progress(0, 0);
+        displayer_local_title("AirPlay");
         break;
 	case RAOP_STOP:
 		actrls_unset();
-		displayer_control(DISPLAYER_SUSPEND);
+		displayer_local_playing(false);
+		displayer_local_progress(0, 0);
+		displayer_local_title("AirPlay");
 		break;
 	case RAOP_METADATA: {
 		char *artist = va_arg(args, char*), *album = va_arg(args, char*), *title = va_arg(args, char*);
-		displayer_metadata(artist, album, title);
+		(void)artist;
+		(void)album;
+		displayer_local_title(title && *title ? title : "AirPlay");
 		break;
 	}	
 	case RAOP_ARTWORK: {
-		uint8_t *data = va_arg(args, uint8_t*);
-		displayer_artwork(data);
+		// This device uses the local title/visualizer, never album artwork.
 		break;
 	}
 	case RAOP_PROGRESS: {
 		int elapsed = va_arg(args, int), duration = va_arg(args, int);
-		displayer_timer(DISPLAYER_ELAPSED, elapsed, duration);
+		displayer_local_progress(elapsed > 0 ? elapsed : 0, duration > 0 ? duration : 0);
 		break;
 	}	
 	default: 

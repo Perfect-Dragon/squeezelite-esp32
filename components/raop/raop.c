@@ -421,6 +421,19 @@ static void rtsp_thread(void *arg) {
 
 
 /*----------------------------------------------------------------------------*/
+static bool parse_progress(const char *value, int *elapsed, int *duration) {
+    unsigned start, current, stop;
+    if (sscanf(value, "%*[^:]:%u/%u/%u", &start, &current, &stop) != 3) return false;
+    // RTP counters wrap at 2^32. Differences are meaningful for media shorter
+    // than half that range (~13.5 hours at the AirPlay rate of 44100 Hz).
+    int32_t elapsed_frames = (int32_t)(current - start);
+    uint32_t duration_frames = stop - start;
+    *elapsed = elapsed_frames > 0 ? (uint64_t)elapsed_frames * 1000 / 44100 : 0;
+    *duration = stop && (int32_t)duration_frames > 0 ?
+                (uint64_t)duration_frames * 1000 / 44100 : 0;
+    return true;
+}
+
 static bool handle_rtsp(raop_ctx_t *ctx, int sock)
 {
 	char *buf = NULL, *body = NULL, method[16] = "";
@@ -600,7 +613,9 @@ static bool handle_rtsp(raop_ctx_t *ctx, int sock)
 	} else if (!strcmp(method, "SET_PARAMETER")) {
 		char *p;
 
-		if (body && (p = strcasestr(body, "volume")) != NULL) {
+		if ((p = kd_lookup(headers, "Content-Type")) && !strncasecmp(p, "image/", 6)) {
+			// http_parse already drained unused artwork in bounded chunks.
+		} else if (body && (p = strcasestr(body, "volume")) != NULL) {
 			float volume;
 
 			sscanf(p, "%*[^:]:%f", &volume);
@@ -608,14 +623,11 @@ static bool handle_rtsp(raop_ctx_t *ctx, int sock)
 			volume = (volume == -144.0) ? 0 : (1 + volume / 30);
 			success = ctx->cmd_cb(RAOP_VOLUME, volume);
 		} else if (body && (p = strcasestr(body, "progress")) != NULL) {
-			int start, current, stop = 0;
+            int elapsed, duration;
+            if (parse_progress(p, &elapsed, &duration)) {
+                success = ctx->cmd_cb(RAOP_PROGRESS, elapsed, duration);
+            }
 
-			// we want ms, not s
-			sscanf(p, "%*[^:]:%u/%u/%u", &start, &current, &stop);
-			current = ((current - start) / 44100) * 1000;
-			if (stop) stop = ((stop - start) / 44100) * 1000;
-			LOG_INFO("[%p]: SET PARAMETER progress %d/%u %s", ctx, current, stop, p);
-			success = ctx->cmd_cb(RAOP_PROGRESS, max(current, 0), stop);
 		} else if (body && ((p = kd_lookup(headers, "Content-Type")) != NULL) && !strcasecmp(p, "application/x-dmap-tagged")) {
 			struct metadata_s metadata;
 			dmap_settings settings = {
@@ -770,7 +782,8 @@ static void search_remote(void *args) {
  }
 #endif
 
-/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
 static char *rsa_apply(unsigned char *input, int inlen, int *outlen, int mode)
 {
 	const static char super_secret_key[] =
@@ -972,4 +985,3 @@ static void on_dmap_string(void *ctx, const char *code, const char *name, const 
 	else if (!strcasecmp(code, "asal")) metadata->album = strndup(buf, len);
 	else if (!strcasecmp(code, "minm")) metadata->title = strndup(buf, len);
 }
-

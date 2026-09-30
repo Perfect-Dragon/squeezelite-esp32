@@ -120,6 +120,11 @@ static bool cmd_handler(cspot_event_t event, ...) {
 	switch(event) {
 	case CSPOT_START:
 		actrls_set(controls, false, NULL, actrls_ir_action);
+		displayer_control(DISPLAYER_SHUTDOWN);
+		local_visualizer_start();
+		displayer_local_playing(false);
+		displayer_local_progress(0, 0);
+		displayer_local_title("Spotify");
 		// Local spectrum visualizer owns the TFT.
     	// Do not activate the legacy metadata display.
 		//displayer_control(DISPLAYER_ACTIVATE, "SPOTIFY", true);
@@ -143,10 +148,8 @@ static bool cmd_handler(cspot_event_t event, ...) {
 
 		displayer_local_title(title);
 
-		if (artwork && displayer_can_artwork()) {
-			ESP_LOGI(TAG, "requesting artwork %s", artwork);
-			http_download(artwork, 128*1024, got_artwork, NULL);
-		}	
+		// No artwork download: the local title and spectrum own this screen.
+		(void)artwork;
 		// displayer_metadata(artist, album, title);
 		// displayer_timer(DISPLAYER_ELAPSED, offset, duration);
 		break;

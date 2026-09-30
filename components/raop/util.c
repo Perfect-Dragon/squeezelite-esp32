@@ -420,6 +420,21 @@ bool http_parse(int sock, char *method, key_data_t *rkd, char **body, int *len)
 
 	if (*len) {
 		int size = 0;
+		char *type = kd_lookup(rkd, "Content-Type");
+		if (!strcmp(method, "SET_PARAMETER") && type && !strncasecmp(type, "image/", 6)) {
+			// Artwork is unused by this device. Consume it to keep RTSP framing
+			// intact without allocating the entire (often > 176 KiB) image.
+			char discard[512];
+			while (size < *len) {
+				int chunk = *len - size;
+				if (chunk > (int)sizeof(discard)) chunk = sizeof(discard);
+				int bytes = recv(sock, discard, chunk, 0);
+				if (bytes <= 0) return false;
+				size += bytes;
+			}
+			*len = 0;
+			return true;
+		}
 
 		*body = malloc(*len + 1);
 		if (!*body) {
@@ -615,8 +630,6 @@ int _fprintf(FILE *file, ...)
 	va_end(args);
 	return n;
 }
-
-
 
 
 
