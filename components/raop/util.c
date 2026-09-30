@@ -19,6 +19,7 @@
 #endif
 
 #include <stdarg.h>
+#include <limits.h>
 
 #include "pthread.h"
 #include "util.h"
@@ -359,6 +360,8 @@ bool http_parse(int sock, char *method, key_data_t *rkd, char **body, int *len)
 	int i, timeout = 100;
 
 	rkd[0].key = NULL;
+	*body = NULL;
+	*len = 0;
 
 	if ((i = read_line(sock, line, sizeof(line), timeout)) <= 0) {
 		if (i < 0) {
@@ -398,7 +401,18 @@ bool http_parse(int sock, char *method, key_data_t *rkd, char **body, int *len)
 		rkd[i].key = strdup(line);
 		rkd[i].data = strdup(ltrim(dp + 1));
 
-		if (!strcasecmp(rkd[i].key, "Content-Length")) *len = atol(rkd[i].data);
+		if (!strcasecmp(rkd[i].key, "Content-Length")) {
+			char *end;
+			errno = 0;
+			long length = strtol(rkd[i].data, &end, 10);
+			if (errno || end == rkd[i].data || *ltrim(end) || length < 0 || length >= INT_MAX) {
+				// Include this entry in the caller's header cleanup on failure.
+				rkd[i + 1].key = NULL;
+				LOG_ERROR("invalid content length", NULL);
+				return false;
+			}
+			*len = (int) length;
+		}
 
 		i++;
 		rkd[i].key = NULL;
@@ -408,17 +422,23 @@ bool http_parse(int sock, char *method, key_data_t *rkd, char **body, int *len)
 		int size = 0;
 
 		*body = malloc(*len + 1);
-		while (*body && size < *len) {
+		if (!*body) {
+			// The caller closes this RTSP connection and frees its headers.
+			// Never dereference a failed allocation (often a large artwork body).
+			LOG_ERROR("cannot allocate request body of %d bytes", *len);
+			return false;
+		}
+		while (size < *len) {
 			int bytes = recv(sock, *body + size, *len - size, 0);
 			if (bytes <= 0) break;
 			size += bytes;
 		}
 
-		(*body)[*len] = '\0';
-
-		if (!*body || size != *len) {
+		if (size != *len) {
 			LOG_ERROR("content length receive error %d %d", *len, size);
+			return false;
 		}
+		(*body)[*len] = '\0';
 	}
 
 	return true;
@@ -595,7 +615,6 @@ int _fprintf(FILE *file, ...)
 	va_end(args);
 	return n;
 }
-
 
 
 

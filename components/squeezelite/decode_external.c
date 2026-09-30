@@ -66,24 +66,25 @@ extern log_level loglevel;
  * Common sink data handler
  */
 static uint32_t sink_data_handler(const uint8_t *data, uint32_t len,
-                                  int retries, unsigned wait_ms,
+                                  int source, int retries, unsigned wait_ms,
                                   bool drop_on_timeout)
 {
     size_t bytes, space;
     uint32_t written = 0;    
 	int wait = retries + 1;
 		
-	// would be better to lock output, but really, it does not matter
-	if (!output.external) {
-		LOG_SDEBUG("Cannot use external sink while LMS is controlling player");
+	LOCK_O;
+	// A rejected START must not let one source write into another's FIFO.
+	// Check under the same lock as source changes and buffer resizing.
+	if (output.external != source) {
+		UNLOCK_O;
 		return 0;
 	} 
 
-	LOCK_O;
 	if (sink_state == SINK_ABORT) sink_state = SINK_RUNNING;
 
 	// there will always be room at some point
-	while (len && wait && sink_state == SINK_RUNNING) {
+	while (len && wait && sink_state == SINK_RUNNING && output.external == source) {
 		bytes = min(_buf_space(outputbuf), _buf_cont_write(outputbuf)) / (BYTES_PER_FRAME / 4);
 		bytes = min(len, bytes);
 #if BYTES_PER_FRAME == 4
@@ -111,7 +112,7 @@ static uint32_t sink_data_handler(const uint8_t *data, uint32_t len,
 		}
 	}	
 
-	if (!wait && drop_on_timeout) {
+	if (!wait && drop_on_timeout && output.external == source) {
         // re-align the buffer according to what we threw away
         _buf_inc_writep(outputbuf, outputbuf->size - (BYTES_PER_FRAME - (len % BYTES_PER_FRAME)));
 		LOG_WARN("Waited too long, dropping frames %d", len);
@@ -127,7 +128,7 @@ static uint32_t sink_data_handler(const uint8_t *data, uint32_t len,
  */
 #if CONFIG_BT_SINK
 static void bt_sink_data_handler(const uint8_t *data, uint32_t len) {
-    sink_data_handler(data, len, 10, 50, true);
+    sink_data_handler(data, len, DECODE_BT, 10, 50, true);
 }    
 
 /****************************************************************************************
@@ -209,7 +210,7 @@ static void raop_sink_data_handler(const uint8_t *data, uint32_t len, u32_t play
 	raop_sync.playtime = playtime;
 	raop_sync.len = len;
 
-	sink_data_handler(data, len, 10, 50, true);
+	sink_data_handler(data, len, DECODE_RAOP, 10, 50, true);
 }	
 
 /****************************************************************************************
@@ -351,7 +352,7 @@ static bool raop_sink_cmd_handler(raop_event_t event, va_list args)
  */
 #if CONFIG_CSPOT_SINK
 static uint32_t cspot_sink_data_handler(const uint8_t *data, uint32_t len) {
-    return sink_data_handler(data, len, 100, 1, false);
+    return sink_data_handler(data, len, DECODE_CSPOT, 100, 1, false);
 }    
 
 /****************************************************************************************
