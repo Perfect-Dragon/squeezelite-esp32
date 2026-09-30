@@ -110,10 +110,21 @@ void CryptoMbedTLS::aesCTRXcrypt(const std::vector<uint8_t>& key,
   if (mbedtls_aes_setkey_enc(&aesCtx, key.data(), key.size() * 8) != 0) {
     throw std::runtime_error("Failed to set AES key");
   }
-  // Perform decrypt
-  if (mbedtls_aes_crypt_ctr(&aesCtx, nbytes, &off, iv.data(), streamBlock,
+  // On classic ESP32, IDF 4.3's AES driver holds a spinlock with interrupts
+  // disabled for the WHOLE call. A CDN range can be 256 KiB: passing it in
+  // one call blocks this core and can stall the other core when TLS also
+  // needs AES. A full PCM FIFO cannot keep I2S serviced during that stall.
+  // Bound each hardware critical section independently of the HTTP range
+  // size. Keep all CTR state across calls, including partial final blocks.
+  constexpr size_t AES_CTR_CHUNK_SIZE = 1024;
+  while (nbytes > 0) {
+    const size_t chunk = nbytes < AES_CTR_CHUNK_SIZE ? nbytes : AES_CTR_CHUNK_SIZE;
+    if (mbedtls_aes_crypt_ctr(&aesCtx, chunk, &off, iv.data(), streamBlock,
                             buffer, buffer) != 0) {
-    throw std::runtime_error("Failed to decrypt");
+      throw std::runtime_error("Failed to decrypt");
+    }
+    buffer += chunk;
+    nbytes -= chunk;
   }
 }
 
