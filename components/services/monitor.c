@@ -26,6 +26,8 @@
 #include "cJSON.h"
 #include "tools.h"
 
+#include "esp_wifi.h"
+
 #define PSEUDO_IDLE_STACK_SIZE	(6*1024)
 
 #define MONITOR_TIMER	(10*1000)
@@ -222,12 +224,32 @@ static void set_spkfault_gpio(int gpio, char *value) {
  *
  */
 static void pseudo_idle(void *arg) {
+    uint32_t last_rssi_ms = 0;
+
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         uint32_t now = pdTICKS_TO_MS(xTaskGetTickCount());
 
         if (monitor_stats) monitor_trace(now);
         if (pseudo_idle_svc) pseudo_idle_svc(now);
+
+        // Sample Wi-Fi RSSI every 5 seconds
+        if ((uint32_t)(now - last_rssi_ms) >= 5000) {
+            last_rssi_ms = now;
+
+            wifi_ap_record_t ap = {0};
+            esp_err_t err = esp_wifi_sta_get_ap_info(&ap);
+
+            if (err == ESP_OK) {
+                ESP_LOGI("wifi_rssi",
+                         "RSSI: %d dBm | Channel: %u",
+                         ap.rssi, (unsigned)ap.primary);
+            } else {
+                ESP_LOGW("wifi_rssi",
+                         "Not connected (%s)",
+                         esp_err_to_name(err));
+            }
+        }
     }
 }
 
