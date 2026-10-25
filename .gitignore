@@ -22,3 +22,5 @@ client_info.h
 
 log.squeezelite.*.txt
 
+build-wrover/
+build-s3/

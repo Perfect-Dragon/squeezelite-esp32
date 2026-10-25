@@ -509,7 +509,8 @@ static int _i2s_write_frames(frames_t out_frames, bool silence, s32_t gainL, s32
 		output_visu_export(obuf + oframes * BYTES_PER_FRAME, out_frames, output.current_sample_rate, silence, (gainL + gainR) / 2);
 	}
 
-	// Restore this device's DAC channel mapping, removed in c80ecc5b.
+#if CONFIG_I2S_SWAP_LR
+	// Swap L/R for the DAC only (CONFIG_I2S_SWAP_LR, see menuconfig > Audio settings).
 	// Keep the FIFO/visualizer and the independent S/PDIF path in L,R order.
 	if (!silence && !spdif.enabled) {
 		ISAMPLE_T *samples = (ISAMPLE_T *)(void *)(obuf + oframes * BYTES_PER_FRAME);
@@ -519,6 +520,7 @@ static int _i2s_write_frames(frames_t out_frames, bool silence, s32_t gainL, s32
 			samples[2 * i + 1] = left;
 		}
 	}
+#endif
 
 	oframes += out_frames;
 

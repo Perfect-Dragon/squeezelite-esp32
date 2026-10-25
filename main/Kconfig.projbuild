@@ -105,6 +105,7 @@ menu "Squeezelite-ESP32"
 			default "model=TAS57xx,bck=33,ws=25,do=32,sda=27,scl=26,mute=14:0" if SQUEEZEAMP
 			default "model=I2S,bck=26,ws=25,do=33,i2c=53,sda=21,scl=22" if TWATCH2020
 			default "model=I2S,bck=5,ws=25,do=26,di=35,i2c=16,sda=18,scl=23,mck" if MUSE
+			default "model=I2S,bck=4,ws=5,do=6" if IDF_TARGET_ESP32S3
 			default "model=I2S,bck=33,ws=26,do=25"
 		config SPDIF_CONFIG
 			string
@@ -179,6 +180,13 @@ menu "Squeezelite-ESP32"
 	endmenu
 
 	menu "Audio settings"
+		config I2S_SWAP_LR
+			bool "Swap left and right channels on the I2S DAC"
+			default y
+			help
+				Exchange left and right samples just before they are sent to the DAC
+				(not to S/PDIF or the visualizer). Needed when the DAC wiring or the
+				chip's I2S channel order comes out reversed.
 		menu "DAC settings"
 			visible if BASIC_I2C_BT
 			menu "I2S settings"
