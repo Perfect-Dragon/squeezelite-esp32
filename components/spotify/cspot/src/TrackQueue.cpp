@@ -150,11 +150,41 @@ QueuedTrack::~QueuedTrack() {
 }
 
 std::shared_ptr<cspot::CDNAudioFile> QueuedTrack::getAudioFile() {
+  // waits for a preopen() in progress on the queue task
+  std::scoped_lock lock(audioFileMutex);
+
   if (state != State::READY) {
     return nullptr;
   }
 
-  return std::make_shared<cspot::CDNAudioFile>(cdnUrl, audioKey);
+  if (audioFile) {
+    audioFile->rewind();
+  } else {
+    audioFile = std::make_shared<cspot::CDNAudioFile>(cdnUrl, audioKey);
+  }
+
+  return audioFile;
+}
+
+void QueuedTrack::preopen() {
+  std::scoped_lock lock(audioFileMutex);
+
+  // already handed to the player (or preopened): never touch it from here.
+  // One attempt only, a failure is retried by playback itself.
+  if (state != State::READY || audioFile || preopenAttempted) {
+    return;
+  }
+  preopenAttempted = true;
+
+  auto file = std::make_shared<cspot::CDNAudioFile>(cdnUrl, audioKey);
+
+  try {
+    file->prefetch();
+    audioFile = file;
+    CSPOT_LOG(info, "Preopened next track %s", identifier.c_str());
+  } catch (const std::exception& e) {
+    CSPOT_LOG(error, "Cannot preopen next track: %s", e.what());
+  }
 }
 
 void QueuedTrack::stepParseMetadata(Track* pbTrack, Episode* pbEpisode) {
@@ -441,6 +471,15 @@ void TrackQueue::runTask() {
       if (track) {
         this->processTrack(track);
       }
+    }
+
+    // Once the current track is settled, open the next one ahead of time so a
+    // skip or the track change does not wait for the network. Only the next
+    // track: each preopened file holds a full read-ahead buffer. A no-op once
+    // done. Runs outside of tracksMutex as it does network I/O.
+    if (trackQueue.size() > 1 && trackQueue[0] && trackQueue[1] &&
+        trackQueue[0]->state == QueuedTrack::State::READY) {
+      trackQueue[1]->preopen();
     }
   }
 }

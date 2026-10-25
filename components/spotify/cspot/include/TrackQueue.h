@@ -58,8 +58,13 @@ class QueuedTrack {
   bool loading = false;
   std::atomic <bool> abandonned = false;
 
-  // Will return nullptr if the track is not ready
+  // Will return nullptr if the track is not ready. The same file object is
+  // returned (rewound) on every call, so a restarted track is not re-downloaded
   std::shared_ptr<cspot::CDNAudioFile> getAudioFile();
+
+  // Opens the audio file and fills its read-ahead window, so that playing
+  // this track does not wait for the network. Errors are left to playback.
+  void preopen();
 
   // --- Steps ---
   void stepLoadMetadata(
@@ -88,6 +93,10 @@ class QueuedTrack {
 
   std::vector<uint8_t> trackId, fileId, audioKey;
   std::string cdnUrl;
+
+  std::mutex audioFileMutex;
+  std::shared_ptr<cspot::CDNAudioFile> audioFile;
+  bool preopenAttempted = false;
 };
 
 class TrackQueue : public bell::Task {

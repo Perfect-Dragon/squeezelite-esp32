@@ -23,8 +23,20 @@ class CDNAudioFile {
 
   /**
   * @brief Opens connection to the provided cdn url, and fetches track metadata.
+  * Does nothing if the stream is already open.
   */
   void openStream();
+
+  /**
+  * @brief Fills the read-ahead window from the start of the file, then
+  * releases the connection. Lets a queued track start without network I/O.
+  */
+  void prefetch();
+
+  /**
+  * @brief Moves back to the start, keeping header, footer and read-ahead data
+  */
+  void rewind();
 
   /**
   * @brief Read and decrypt part of the cdn stream
@@ -61,6 +73,8 @@ class CDNAudioFile {
   // a new TLS/HTTP request at short compressed-audio intervals. Seeking still
   // invalidates this cache through enableRequestMargin and the existing range path.
   const int HTTP_BUFFER_SIZE = 1024 * 256;
+  // First request after opening or seeking is smaller so decoding starts sooner
+  const int HTTP_FIRST_CHUNK_SIZE = 1024 * 128;
   const int SPOTIFY_OPUS_HEADER = 167;
 
   // Used to store opus metadata, speeds up read
@@ -84,6 +98,8 @@ class CDNAudioFile {
   size_t lastRequestCapacity = 0;
 
   bool enableRequestMargin = false;
+  bool opened = false;
+  bool shortNextRequest = true;
 
   std::string cdnUrl;
   std::vector<uint8_t> audioKey;
@@ -92,6 +108,7 @@ class CDNAudioFile {
                       uint8_t* dst, size_t dstCapacity,
                       size_t& readCapacity, const char* label,
                       size_t logPosition);
+  bool fetchChunk(size_t requestPosition, size_t size);
   void decrypt(uint8_t* dst, size_t nbytes, size_t pos);
 };
 }  // namespace cspot

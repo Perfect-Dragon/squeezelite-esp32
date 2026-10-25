@@ -38,7 +38,14 @@ size_t CDNAudioFile::getPosition() {
 
 void CDNAudioFile::seek(size_t newPos) {
   this->enableRequestMargin = true;
+  this->shortNextRequest = true;
   this->position = newPos;
+}
+
+void CDNAudioFile::rewind() {
+  this->enableRequestMargin = false;
+  this->shortNextRequest = true;
+  this->position = 0;
 }
 
 bool CDNAudioFile::fetchHttpRange(
@@ -94,6 +101,11 @@ bool CDNAudioFile::fetchHttpRange(
 }
 
 void CDNAudioFile::openStream() {
+  if (this->opened) {
+    CSPOT_LOG(info, "HTTP stream already open");
+    return;
+  }
+
   CSPOT_LOG(info, "Opening HTTP stream to %s", this->cdnUrl.c_str());
 
   size_t headerCapacity = 0;
@@ -134,6 +146,37 @@ void CDNAudioFile::openStream() {
   this->position = 0;
   this->lastRequestPosition = 0;
   this->lastRequestCapacity = 0;
+  this->opened = true;
+}
+
+void CDNAudioFile::prefetch() {
+  openStream();
+
+  if (this->lastRequestCapacity == 0 && fetchChunk(0, HTTP_BUFFER_SIZE)) {
+    CSPOT_LOG(info, "Prefetched %u bytes", (unsigned)this->lastRequestCapacity);
+  }
+
+  // Nothing else will be read until playback reaches the end of this window,
+  // so don't hold a TLS session (and its memory) open for it meanwhile
+  this->httpConnection.reset();
+}
+
+bool CDNAudioFile::fetchChunk(size_t requestPosition, size_t size) {
+  size_t readCapacity = 0;
+
+  if (!fetchHttpRange(bell::HTTPClient::RangeHeader::range(
+                          requestPosition, requestPosition + size - 1),
+                      this->httpBuffer.data(), this->httpBuffer.size(),
+                      readCapacity, "READ", requestPosition)) {
+    this->lastRequestPosition = 0;
+    this->lastRequestCapacity = 0;
+    return false;
+  }
+
+  this->lastRequestPosition = requestPosition;
+  this->lastRequestCapacity = readCapacity;
+  this->decrypt(this->httpBuffer.data(), readCapacity, requestPosition);
+  return true;
 }
 
 size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
@@ -193,29 +236,18 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
       this->enableRequestMargin = false;
     }
 
-    size_t readCapacity = 0;
+    const size_t requestSize =
+        this->shortNextRequest ? HTTP_FIRST_CHUNK_SIZE : HTTP_BUFFER_SIZE;
+    this->shortNextRequest = false;
 
-    if (!fetchHttpRange(
-            bell::HTTPClient::RangeHeader::range(
-                requestPosition, requestPosition + HTTP_BUFFER_SIZE - 1),
-            this->httpBuffer.data(), this->httpBuffer.size(),
-            readCapacity, "READ", requestPosition)) {
+    if (!fetchChunk(requestPosition, requestSize)) {
       // Do not throw through libvorbis' C callbacks. After one reconnect
       // and retry of the same byte range, report EOF and let TrackPlayer
       // unwind cleanly.
       CSPOT_LOG(error, "Failed to read audio chunk at %u after retry",
                 (unsigned int)requestPosition);
-      this->lastRequestPosition = 0;
-      this->lastRequestCapacity = 0;
       return 0;
     }
-
-    this->lastRequestPosition = requestPosition;
-    this->lastRequestCapacity = readCapacity;
-
-    this->decrypt(this->httpBuffer.data(), lastRequestCapacity,
-
-                  this->lastRequestPosition);
 
     return readBytes(dst, bytes);
   }
