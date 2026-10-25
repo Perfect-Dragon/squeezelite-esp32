@@ -164,6 +164,7 @@ void TrackPlayer::runTask() {
 
       if (track->state != QueuedTrack::State::READY) {
         CSPOT_LOG(error, "Track failed to load, skipping it");
+        track->abandonned = true;
         this->eofCallback();
         continue;
       }
@@ -176,16 +177,16 @@ void TrackPlayer::runTask() {
     {
       std::scoped_lock lock(playbackMutex);
 
-      currentTrackStream = track->getAudioFile();
-
-      // Open the stream. Network/TLS failures during header/footer fetch must
-      // not unwind out of the FreeRTOS player task.
+      // Network/TLS failures during header/footer fetch must not unwind out
+      // of the FreeRTOS player task. Skip to the next track like a failed load.
       try {
+        currentTrackStream = track->getAudioFile();
         currentTrackStream->openStream();
       } catch (const std::exception& e) {
-        CSPOT_LOG(error, "Failed to open track stream: %s", e.what());
+        CSPOT_LOG(error, "Failed to open audio stream: %s", e.what());
         currentSongPlaying = false;
         currentTrackStream = nullptr;
+        track->abandonned = true;
         this->eofCallback();
         continue;
       }
