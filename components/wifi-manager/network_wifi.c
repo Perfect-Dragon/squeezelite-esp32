@@ -213,7 +213,7 @@ esp_err_t network_wifi_add_ap_from_sta_copy(const wifi_sta_config_t* sta) {
         ESP_LOGE(TAG, "Invalid access point entry");
         return ESP_ERR_INVALID_ARG;
     }
-    if (!sta->ssid || strlen((char*)sta->ssid) == 0) {
+    if (sta->ssid[0] == '\0') {
         ESP_LOGE(TAG, "Invalid access point ssid");
         return ESP_ERR_INVALID_ARG;
     }
@@ -559,8 +559,8 @@ esp_err_t network_wifi_store_ap_json(known_access_point_t* item) {
          * Do this even if its aplist JSON already existed.
          */
         if (sta &&
-            strlen((char*)sta->ssid) > 0 &&
-            strcmp((char*)sta->ssid, item->ssid) == 0) {
+            sta->ssid[0] != '\0' &&
+            strncmp((char*)sta->ssid, item->ssid, sizeof(sta->ssid)) == 0) {
 
             ESP_LOGI(TAG,
                      "Committing active access point");
@@ -568,14 +568,14 @@ esp_err_t network_wifi_store_ap_json(known_access_point_t* item) {
             esp_err_t active_err =
                 network_wifi_write_nvs(
                     "ssid",
-                    (char*)sta->ssid,
+                    ssid_string(sta),
                     0);
 
             if (active_err == ESP_OK) {
                 active_err =
                     network_wifi_write_nvs(
                         "password",
-                        (char*)sta->password,
+                        STR_OR_BLANK(password_string(sta)),
                         0);
             }
 
@@ -677,11 +677,13 @@ bool network_wifi_sta_config_changed() {
      * First check whether the AP itself is new
      * or its password changed.
      */
-    known_access_point_t* known = network_wifi_get_ap_entry((char*)sta->ssid);
+    known_access_point_t* known = network_wifi_get_ap_entry(ssid_string(sta));
 
     const char* known_password = (known && known->password) ? known->password : "";
 
-    if (!known || strcmp(known->ssid, (char*)sta->ssid) != 0 || strcmp(known_password, (char*)sta->password) != 0) {
+    // ssid/password are fixed-size arrays, not NUL-terminated when full
+    if (!known || strncmp(known->ssid, (char*)sta->ssid, sizeof(sta->ssid)) != 0 ||
+        strncmp(known_password, (char*)sta->password, sizeof(sta->password)) != 0) {
         ESP_LOGI(TAG, "New network configuration found");
         return true;
     }
@@ -693,9 +695,10 @@ bool network_wifi_sta_config_changed() {
      */
     const wifi_sta_config_t* saved = network_wifi_load_active_config();
 
-    if (!saved || strcmp((char*)saved->ssid, (char*)sta->ssid) != 0 || strcmp((char*)saved->password, (char*)sta->password) != 0) {
+    if (!saved || strncmp((char*)saved->ssid, (char*)sta->ssid, sizeof(sta->ssid)) != 0 ||
+        strncmp((char*)saved->password, (char*)sta->password, sizeof(sta->password)) != 0) {
 
-        ESP_LOGI(TAG, "Active WiFi changed to %s", (char*)sta->ssid);
+        ESP_LOGI(TAG, "Active WiFi changed to %s", ssid_string(sta));
         return true;
     }
 
@@ -827,7 +830,7 @@ bool network_wifi_get_config_for_ssid(wifi_config_t* config, const char* ssid) {
     }
     memset(&config->ap, 0x00, sizeof(config->ap));
     strncpy((char*)config->ap.ssid, item->ssid, sizeof(config->ap.ssid));
-    strncpy((char*)config->ap.password, item->password, sizeof(config->ap.ssid));
+    strncpy((char*)config->ap.password, item->password, sizeof(config->ap.password));
     config->sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     return true;
 }
@@ -1397,11 +1400,11 @@ esp_err_t network_wifi_connect_active_ssid() {
      * go through network_wifi_connect_ssid so last_try
      * is updated.
      */
-    if (network_wifi_is_known_ap((char*)config->ssid)) {
-        return network_wifi_connect_ssid((char*)config->ssid);
+    if (network_wifi_is_known_ap(ssid_string(config))) {
+        return network_wifi_connect_ssid(ssid_string(config));
     }
 
-    return network_wifi_connect((char*)config->ssid, (char*)config->password);
+    return network_wifi_connect(ssid_string(config), password_string(config));
 }
 void network_wifi_clear_config() {
     /* erase configuration */
