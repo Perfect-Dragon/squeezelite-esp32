@@ -67,33 +67,43 @@ void MercurySession::runTask() {
   }
 }
 
+
 void MercurySession::reconnect() {
-  isReconnecting = true;
+    isReconnecting = true;
 
-  try {
-    this->conn = nullptr;
-    std::atomic_store(&this->shanConn, std::shared_ptr<cspot::ShannonConnection>{});
+    while (isRunning) {
+        try {
+            this->conn = nullptr;
+            std::atomic_store(
+                &this->shanConn,
+                std::shared_ptr<cspot::ShannonConnection>{}
+            );
 
-    this->connectWithRandomAp();
-    this->authenticate(this->authBlob);
+            this->connectWithRandomAp();
+            this->authenticate(this->authBlob);
 
-    CSPOT_LOG(info, "Reconnection successful");
+            CSPOT_LOG(info, "Reconnection successful");
 
-    BELL_SLEEP_MS(100);
+            BELL_SLEEP_MS(100);
 
-    lastPingTimestamp = timeProvider->getSyncedTimestamp();
-    isReconnecting = false;
+            lastPingTimestamp = timeProvider->getSyncedTimestamp();
 
-    this->executeEstabilishedCallback = true;
-  } catch (...) {
-    CSPOT_LOG(error, "Cannot reconnect, will retry in 5s");
-    BELL_SLEEP_MS(5000);
+            isReconnecting = false;
+            this->executeEstabilishedCallback = true;
+            return;
 
-    if (isRunning) {
-      return reconnect();
+        } catch (...) {
+            CSPOT_LOG(error, "Cannot reconnect, will retry in 5s");
+
+            if (isRunning) {
+                BELL_SLEEP_MS(5000);
+            }
+        }
     }
-  }
+
+    isReconnecting = false;
 }
+
 
 void MercurySession::setConnectedHandler(
     ConnectionEstabilishedCallback callback) {
