@@ -50,6 +50,12 @@ DOCKER_ARGS=(--rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e IDF_TARGET=$TARGET
              -v "$PWD:/project" -w /project)
 mkdir -p "$HOME/.cache/squeezelite-ccache"
 
+# Spotify client id/secret, read by components/spotify/CMakeLists.txt at configure time:
+#   export SPOTIFY_SECRET='-DCLIENT_ID="..." -DCLIENT_SECRET="..."'
+# "-e NAME" without a value copies it from this shell, so it never appears on a command line.
+# Without it, components/spotify/client_info.h (upstream's) is used.
+[ -n "$SPOTIFY_SECRET" ] && DOCKER_ARGS+=(-e SPOTIFY_SECRET)
+
 # give the container access to any serial port that is plugged in
 for dev in /dev/ttyUSB* /dev/ttyACM*; do
     [ -e "$dev" ] && DOCKER_ARGS+=(--device "$dev" --group-add "$(stat -c %g "$dev")")

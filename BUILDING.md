@@ -34,6 +34,16 @@ confuses ESP-IDF 4.4 when building the other board (the script refuses to run if
 ./docker-build.sh s3 -p /dev/ttyUSB0 erase_flash       # wipe everything, incl. Wi-Fi & settings
 ```
 
+To build with your own Spotify client id/secret instead of the one in
+`components/spotify/client_info.h`, set it in your shell first (not in a file) and
+reconfigure once, as it is read when CMake configures:
+
+```bash
+read -rs -p "Spotify client id: " ID; echo; read -rs -p "Spotify client secret: " SECRET; echo
+export SPOTIFY_SECRET="-DCLIENT_ID=\"$ID\" -DCLIENT_SECRET=\"$SECRET\""
+./docker-build.sh s3 reconfigure build
+```
+
 Use the board's **UART** micro-USB port (CP2102N, shows up as `/dev/ttyUSB0`).
 
 ## S3 wiring (N32R16V)
