@@ -130,6 +130,7 @@ typedef struct rtp_s {
 	int latency;			// rtp hold depth in samples
 	u32_t resent_req, resent_rec;	// total resent + recovered frames
 	u32_t silent_frames;	// total silence frames
+	u32_t late;			// resent frames that arrived after their slot
 	u32_t discarded;
 	abuf_t audio_buffer[BUFFER_FRAMES_MAX];
 	seq_t ab_read, ab_write;
@@ -455,7 +456,7 @@ static void buffer_put_packet(rtp_t *ctx, seq_t seqno, unsigned rtptime, bool fi
 	if (ctx->state == RTP_WAIT) {
 		ctx->ab_write = seqno - 1;
 		ctx->ab_read = ctx->ab_write + 1;
-        ctx->resent_req = ctx->resent_rec = ctx->silent_frames = ctx->discarded = 0;        
+        ctx->resent_req = ctx->resent_rec = ctx->silent_frames = ctx->discarded = ctx->late = 0;        
 		if (ctx->first_seqno != -1) {
         	LOG_INFO("[%p]: 1st accepted packet:%d, now playing", ctx, seqno);                                    
 			ctx->state = RTP_PLAY;
@@ -514,12 +515,17 @@ static void buffer_put_packet(rtp_t *ctx, seq_t seqno, unsigned rtptime, bool fi
 		LOG_DEBUG("[%p]: packet recovered seqno:%hu rtptime:%u (W:%hu R:%hu)", ctx, seqno, rtptime, ctx->ab_write, ctx->ab_read);
 	} else {
         // too late
-		if (abuf->missed) LOG_INFO("[%p]: packet too late seqno:%hu rtptime:%u (W:%hu R:%hu)", ctx, seqno, rtptime, ctx->ab_write, ctx->ab_read);
+		// counted only: printing each one at 115200 baud takes longer than a packet lasts and
+		// stalls this thread under ab_mutex, so a burst of losses snowballs
+		if (abuf->missed) {
+			ctx->late++;
+			LOG_DEBUG("[%p]: packet too late seqno:%hu rtptime:%u (W:%hu R:%hu)", ctx, seqno, rtptime, ctx->ab_write, ctx->ab_read);
+		}
         abuf = NULL;
 	}
 
 	if (ctx->in_frames++ > 1000) {
-		LOG_INFO("[%p]: fill [level:%hu rec:%u] [W:%hu R:%hu]", ctx, ctx->ab_write - ctx->ab_read, ctx->resent_rec, ctx->ab_write, ctx->ab_read);
+		LOG_INFO("[%p]: fill [level:%hu rec:%u late:%u] [W:%hu R:%hu]", ctx, ctx->ab_write - ctx->ab_read, ctx->resent_rec, ctx->late, ctx->ab_write, ctx->ab_read);
 		ctx->in_frames = 0;
 	}
 
