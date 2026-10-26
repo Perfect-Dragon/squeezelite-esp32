@@ -27,12 +27,22 @@ confuses ESP-IDF 4.4 when building the other board (the script refuses to run if
 
 ```bash
 ./docker-build.sh s3                                   # build
-./docker-build.sh s3 -p /dev/ttyUSB0 flash             # build + flash
-./docker-build.sh s3 -p /dev/ttyUSB0 monitor           # serial log, Ctrl+] to quit
-./docker-build.sh s3 -p /dev/ttyUSB0 flash monitor     # both
+./docker-build.sh s3 update                            # build, flash only the Squeezelite app, boot it
+./docker-build.sh s3 log                               # serial log (see below)
 ./docker-build.sh s3 menuconfig                        # change build settings
+./docker-build.sh s3 -p /dev/ttyUSB0 flash             # flash everything (first install, partition changes)
 ./docker-build.sh s3 -p /dev/ttyUSB0 erase_flash       # wipe everything, incl. Wi-Fi & settings
 ```
+
+`update` is the everyday one: it leaves bootloader, recovery and settings alone. A full
+`flash` also resets the boot selection, so the board then starts in recovery
+(the web UI or another `update` gets it back into Squeezelite).
+
+In `log`: **Ctrl+T then Ctrl+L** starts/stops saving everything to
+`log.squeezelite.<date>.txt` in the project folder, **Ctrl+]** quits. Crash backtraces
+are decoded against the Squeezelite app (plain `idf.py monitor` decodes them against
+the recovery app, which gives nonsense). Use `PORT=/dev/ttyUSB1 ./docker-build.sh ...`
+for another port.
 
 To build with your own Spotify client id/secret instead of the one in
 `components/spotify/client_info.h`, set it in your shell first (not in a file) and
