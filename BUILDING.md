@@ -46,7 +46,8 @@ for another port.
 
 To build with your own Spotify client id/secret instead of the one in
 `components/spotify/client_info.h`, set it in your shell first (not in a file) and
-reconfigure once, as it is read when CMake configures:
+reconfigure once, as it is read when CMake configures (`update` does this by itself
+while `SPOTIFY_SECRET` is set):
 
 ```bash
 read -rs -p "Spotify client id: " ID; echo; read -rs -p "Spotify client secret: " SECRET; echo

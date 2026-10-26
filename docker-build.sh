@@ -55,7 +55,10 @@ case "$1" in
         # The project's squeezelite-flash target writes squeezelite.bin to ota_0 only.
         # "flash" also writes a blank otadata, which makes the board boot recovery,
         # so select ota_0 explicitly afterwards (otatool resets the board when done).
-        CMD="$IDF_BUILD build && ESPPORT=$PORT ESPBAUD=460800 ninja -C $BUILD squeezelite-flash \
+        # SPOTIFY_SECRET is only read when CMake configures, so reconfigure while it is set
+        RECONF=""
+        [ -n "$SPOTIFY_SECRET" ] && RECONF="reconfigure"
+        CMD="$IDF_BUILD $RECONF build && ESPPORT=$PORT ESPBAUD=460800 ninja -C $BUILD squeezelite-flash \
              && python \$IDF_PATH/components/app_update/otatool.py --port $PORT switch_ota_partition --slot 0"
         ;;
     log)
