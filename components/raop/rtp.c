@@ -73,7 +73,9 @@ static log_level 	*loglevel = &raop_loglevel;
 // default buffer size
 #define BUFFER_FRAMES_MAX 	((RAOP_SAMPLE_RATE * 10) / 352 )
 #define BUFFER_FRAMES_MIN 	( (150 * RAOP_SAMPLE_RATE * 2) / (352 * 100) )
-#define MAX_PACKET       1408
+// an uncompressed 352-frame ALAC packet is 12 (RTP) + 7 (ALAC header) + 1408 bytes, +4 when
+// re-sent (PipeWire/PulseAudio senders); 1408 truncated the last frames into garbage
+#define MAX_PACKET       2048
 #define MIN_LATENCY		11025
 #define MAX_LATENCY   	( (120 * RAOP_SAMPLE_RATE * 2) / 100 )
 
