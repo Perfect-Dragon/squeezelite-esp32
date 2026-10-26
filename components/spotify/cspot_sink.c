@@ -122,8 +122,6 @@ static bool cmd_handler(cspot_event_t event, ...) {
 		actrls_set(controls, false, NULL, actrls_ir_action);
 		displayer_control(DISPLAYER_SHUTDOWN);
 		local_visualizer_start();
-		displayer_local_playing(false);
-		displayer_local_progress(0, 0);
 		displayer_local_title("Spotify");
 		// Local spectrum visualizer owns the TFT.
     	// Do not activate the legacy metadata display.

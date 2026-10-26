@@ -114,27 +114,15 @@ static bool cmd_handler(raop_event_t event, ...) {
 		actrls_set(controls, false, NULL, actrls_ir_action);
 		displayer_control(DISPLAYER_SHUTDOWN);
 		local_visualizer_start();
-		displayer_local_playing(false);
-		displayer_local_progress(0, 0);
 		displayer_local_title("AirPlay");
-		break;
-	case RAOP_PLAY:
-		displayer_local_playing(true);
-		break;		
-	case RAOP_FLUSH:
-		displayer_local_playing(false);
 		break;
     case RAOP_STALLED:
         raop_abort(raop);
         actrls_unset();
-        displayer_local_playing(false);
-        displayer_local_progress(0, 0);
         displayer_local_title("AirPlay");
         break;
 	case RAOP_STOP:
 		actrls_unset();
-		displayer_local_playing(false);
-		displayer_local_progress(0, 0);
 		displayer_local_title("AirPlay");
 		break;
 	case RAOP_METADATA: {
@@ -148,11 +136,6 @@ static bool cmd_handler(raop_event_t event, ...) {
 		// This device uses the local title/visualizer, never album artwork.
 		break;
 	}
-	case RAOP_PROGRESS: {
-		int elapsed = va_arg(args, int), duration = va_arg(args, int);
-		displayer_local_progress(elapsed > 0 ? elapsed : 0, duration > 0 ? duration : 0);
-		break;
-	}	
 	default: 
 		break;
 	}

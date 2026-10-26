@@ -200,7 +200,7 @@ CONFIG_SET_GPIO=""
 #
 # Audio settings
 #
-CONFIG_I2S_SWAP_LR=y
+# CONFIG_I2S_SWAP_LR is not set
 # CONFIG_LMS_ENABLE is not set
 
 #

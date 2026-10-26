@@ -44,5 +44,3 @@ bool displayer_can_artwork(void);
 char * display_get_supported_drivers(void);
 void displayer_local_title(const char *title);
 void local_visualizer_start(void);
-void displayer_local_progress(uint32_t elapsed_ms, uint32_t duration_ms);
-void displayer_local_playing(bool playing);

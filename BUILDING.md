@@ -80,4 +80,5 @@ The value is stored in NVS on first boot, so on an already configured board chan
   ESP-IDF 4.4.8 recovery image no longer fitted. Flash it over USB once; OTA cannot
   change the partition table. Settings (NVS) stay where they were.
 - `CONFIG_I2S_SWAP_LR` (menuconfig > Squeezelite-ESP32 > Audio settings) swaps L/R
-  for the DAC. It is on by default; turn it off if channels come out reversed on the S3.
+  for the DAC. The PCM5102 needs it on the WROVER (on by default there) but not on
+  the S3 (off), so the ESP32's I2S channel order is the cause, not the wiring.
