@@ -44,10 +44,11 @@ are decoded against the Squeezelite app (plain `idf.py monitor` decodes them aga
 the recovery app, which gives nonsense). Use `PORT=/dev/ttyUSB1 ./docker-build.sh ...`
 for another port.
 
-To build with your own Spotify client id/secret instead of the one in
-`components/spotify/client_info.h`, set it in your shell first (not in a file) and
-reconfigure once, as it is read when CMake configures (`update` does this by itself
-while `SPOTIFY_SECRET` is set):
+Spotify needs your own client id/secret (`components/spotify/client_info.h` only has a
+placeholder). Set it in your shell first (not in a file), in the same terminal, before
+every build or `update`. It is read when CMake configures, and CMake re-configures on its
+own now and then, so `docker-build.sh` refuses to build without it (`NO_SPOTIFY_KEY=1`
+builds anyway, with Spotify not working):
 
 ```bash
 read -rs -p "Spotify client id: " ID; echo; read -rs -p "Spotify client secret: " SECRET; echo

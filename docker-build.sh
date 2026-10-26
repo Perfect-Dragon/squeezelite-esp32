@@ -49,6 +49,20 @@ if [ -f sdkconfig ]; then
     exit 1
 fi
 
+# Without SPOTIFY_SECRET a build falls back to the placeholder key in client_info.h and
+# Spotify can't log in. A plain build is not safe either: CMake re-runs on its own (e.g.
+# after a commit) and then drops the key it had, so refuse unless asked not to.
+case "$1" in
+    log|menuconfig|clean|fullclean|erase_flash|monitor) ;;
+    *)
+        if [ -z "$SPOTIFY_SECRET" ] && [ -z "$NO_SPOTIFY_KEY" ]; then
+            echo "SPOTIFY_SECRET is not set, so this firmware would have no working Spotify key."
+            echo "Set it first (see BUILDING.md), or run with NO_SPOTIFY_KEY=1 to build anyway."
+            exit 1
+        fi
+        ;;
+esac
+
 IDF_BUILD="idf.py $IDF_ARGS -DDEPTH=16"
 case "$1" in
     update)
