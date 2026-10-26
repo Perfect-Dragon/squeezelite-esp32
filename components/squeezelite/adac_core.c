@@ -31,7 +31,8 @@ static int i2c_port = -1;
 int adac_init(char *config, int i2c_port_num) {	 
 	int i2c_addr = 0;
 
-	i2c_port = i2c_port_num;
+	// only set once the driver is installed, so deinit does not delete a driver that never was
+	i2c_port = -1;
 
 	// configure i2c
 	i2c_config_t i2c_config = {
@@ -52,11 +53,11 @@ int adac_init(char *config, int i2c_port_num) {
 		return i2c_addr;
 	}	
 	
-	ESP_LOGI(TAG, "DAC uses I2C port:%d, sda:%d, scl:%d", i2c_port, i2c_config.sda_io_num, i2c_config.scl_io_num);
-	
-	// we have an I2C configured	
-	i2c_param_config(i2c_port, &i2c_config);
-	i2c_driver_install(i2c_port, I2C_MODE_MASTER, false, false, false);
+	ESP_LOGI(TAG, "DAC uses I2C port:%d, sda:%d, scl:%d", i2c_port_num, i2c_config.sda_io_num, i2c_config.scl_io_num);
+
+	// we have an I2C configured
+	i2c_param_config(i2c_port_num, &i2c_config);
+	if (i2c_driver_install(i2c_port_num, I2C_MODE_MASTER, false, false, false) == ESP_OK) i2c_port = i2c_port_num;
 	
 	return i2c_addr;
 }	
