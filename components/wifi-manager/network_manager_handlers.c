@@ -137,7 +137,7 @@ static void network_initialize_state_machine_globals(){
 
 static void network_connect_active_ssid(state_machine_t* const State_Machine) {
     network_t* const nm = (network_t*)State_Machine;
-    if (network_wifi_connect_active_ssid() != ESP_OK) {
+    if (network_wifi_connect_active_ssid() != ESP_OK && network_wifi_connect_next_known() != ESP_OK) {
         ESP_LOGE(TAG, "Oups.  Something went wrong!");
         nm->wifi_connected = false;
         ESP_LOGD(TAG, "Checking if ethernet interface is connected");
@@ -671,8 +671,17 @@ static state_machine_result_t NETWORK_WIFI_CONFIGURING_ACTIVE_STATE_exit_handler
 /********************************************************************************************* 
  * WIFI_CONFIGURING_STATE
  */
+/* Nothing else ever leaves this AP mode by itself, so a speaker that lost its
+ * (phone hotspot) network, or booted before it was up, would wait here until
+ * rebooted. Retry the saved networks periodically, unless someone is using the AP. */
+static void network_configuring_retry_timer(network_t* nm) {
+    if (network_wifi_get_known_count() > 0) {
+        network_set_timer(nm->sta_polling_min_ms, "Retry saved WiFi");
+    }
+}
 static state_machine_result_t WIFI_CONFIGURING_STATE_entry_handler(state_machine_t* const State_Machine) {
     network_handler_entry_print(State_Machine,true);
+    network_configuring_retry_timer((network_t *)State_Machine);
     NETWORK_EXECUTE_CB(State_Machine);
     network_handler_entry_print(State_Machine,false);
     return EVENT_HANDLED;
@@ -680,11 +689,24 @@ static state_machine_result_t WIFI_CONFIGURING_STATE_entry_handler(state_machine
 static state_machine_result_t WIFI_CONFIGURING_STATE_handler(state_machine_t* const State_Machine) {
     network_handler_print(State_Machine,true);
     HANDLE_GLOBAL_EVENT(State_Machine);
+    state_machine_result_t result = EVENT_UN_HANDLED;
+    if (State_Machine->Event == EN_TIMER) {
+        wifi_sta_list_t stations = { 0 };
+        if (esp_wifi_ap_get_sta_list(&stations) == ESP_OK && stations.num > 0) {
+            ESP_LOGI(TAG, "Client connected to the AP, not retrying saved WiFi now");
+            network_configuring_retry_timer((network_t *)State_Machine);
+            result = EVENT_HANDLED;
+        } else {
+            ESP_LOGI(TAG, "Retrying saved WiFi networks");
+            result = local_traverse_state(State_Machine, &Wifi_Active_State[WIFI_CONNECTING_STATE],__FUNCTION__);
+        }
+    }
     network_handler_print(State_Machine,false);
-    return EVENT_UN_HANDLED;
+    return result;
 }
 static state_machine_result_t WIFI_CONFIGURING_STATE_exit_handler(state_machine_t* const State_Machine) {
     network_exit_handler_print(State_Machine,true);
+    network_set_timer(0,NULL);
     network_exit_handler_print(State_Machine,false);
     return EVENT_HANDLED;
 }

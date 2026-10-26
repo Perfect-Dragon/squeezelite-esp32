@@ -22,7 +22,9 @@
 using namespace cspot;
 
 MercurySession::MercurySession(std::shared_ptr<TimeProvider> timeProvider)
-    : bell::Task("mercury_dispatcher", 4 * 1024, 3, 1) {
+    // reconnect() runs on this task (TLS handshake + authentication): 4KB
+    // overflowed when the network dropped. The stack is in PSRAM.
+    : bell::Task("mercury_dispatcher", 16 * 1024, 3, 1) {
   this->timeProvider = timeProvider;
 }
 

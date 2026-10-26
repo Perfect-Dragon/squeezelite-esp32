@@ -340,6 +340,8 @@ void app_main()
 		ESP_LOGI(TAG, "System is booting from power on.");
 		cold_boot = true;
         ColdBootIndicatorFlag = 0xFACE;
+		// RTC_NOINIT: random at power on, which could send us to recovery after a few reboots
+		RebootCounter = RecoveryRebootCounter = 0;
     }
 	else {
 		cold_boot = false;
