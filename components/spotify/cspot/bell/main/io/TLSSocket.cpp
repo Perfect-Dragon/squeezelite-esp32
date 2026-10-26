@@ -9,6 +9,9 @@
 
 namespace {
 constexpr uint32_t TLS_READ_TIMEOUT_MS = 3000;
+// A handshake is several round trips (plus certificate work), which on a
+// phone hotspot can legitimately take longer than one bounded read
+constexpr uint32_t TLS_HANDSHAKE_TIMEOUT_MS = 10000;
 }
 #ifdef ESP_PLATFORM
 #include "esp_timer.h"
@@ -77,7 +80,8 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
 
   // Bound each blocking TLS receive. Without f_recv_timeout, mbedtls_ssl_read()
   // can wait for the TCP stack for minutes after the Wi-Fi path has gone bad.
-  mbedtls_ssl_conf_read_timeout(&conf, TLS_READ_TIMEOUT_MS);
+  // The handshake gets a longer bound, see below for the switch to the read one.
+  mbedtls_ssl_conf_read_timeout(&conf, TLS_HANDSHAKE_TIMEOUT_MS);
 
   if ((ret = mbedtls_ssl_setup(&ssl, &conf)) != 0) {
     BELL_LOG(error, "http_tls", "failed! ssl_setup returned %d\n", ret);
@@ -100,6 +104,9 @@ void bell::TLSSocket::open(const std::string& hostUrl, uint16_t port) {
   }
   BELL_LOG(info, "http_tls", "TLS HANDSHAKE end socket=%p fd=%d",
            static_cast<void*>(this), server_fd.fd);
+
+  // ssl keeps a pointer to conf, so this applies to all further reads
+  mbedtls_ssl_conf_read_timeout(&conf, TLS_READ_TIMEOUT_MS);
 }
 
 int bell::TLSSocket::read(uint8_t* buf, size_t len) {

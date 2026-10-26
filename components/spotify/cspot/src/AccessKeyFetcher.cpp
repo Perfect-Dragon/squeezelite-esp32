@@ -4,6 +4,7 @@
 #include <initializer_list>  // for initializer_list
 #include <map>               // for operator!=, operator==
 #include <type_traits>       // for remove_extent_t
+#include <stdexcept>         // for runtime_error
 #include <vector>            // for vector
 
 #include "BellLogger.h"    // for AbstractLogger
@@ -76,32 +77,44 @@ void AccessKeyFetcher::updateAccessKey() {
         "&client_secret=" + ctx->config.clientSecret;
     std::vector<uint8_t> body(credentials.begin(), credentials.end());
 
-    auto response = bell::HTTPClient::post(
-        "https://accounts.spotify.com/api/token",
-        {{"Content-Type", "application/x-www-form-urlencoded"}}, body);
+    // A network failure must not escape: this runs on the queue task, which
+    // has no handler (the whole device aborts), and keyPending would stay set
+    try {
+      auto response = bell::HTTPClient::post(
+          "https://accounts.spotify.com/api/token",
+          {{"Content-Type", "application/x-www-form-urlencoded"}}, body);
 
 #ifdef BELL_ONLY_CJSON
-    cJSON* root = cJSON_ParseWithLength(response->body().data(), response->body().size());
-    if (!cJSON_GetObjectItem(root, "error")) {
-      accessKey =
-          std::string(cJSON_GetObjectItem(root, "access_token")->valuestring);
-      int expiresIn = cJSON_GetObjectItem(root, "expires_in")->valueint;
-      cJSON_Delete(root);
+      cJSON* root = cJSON_ParseWithLength(response->body().data(), response->body().size());
+      if (!root) throw std::runtime_error("invalid token response");
+      if (!cJSON_GetObjectItem(root, "error") &&
+          cJSON_IsString(cJSON_GetObjectItem(root, "access_token"))) {
+        accessKey =
+            std::string(cJSON_GetObjectItem(root, "access_token")->valuestring);
+        int expiresIn = cJSON_GetObjectItem(root, "expires_in")->valueint;
+        cJSON_Delete(root);
 #else
-    auto root = nlohmann::json::parse(response->bytes());
-    if (!root.contains("error")) {
-      accessKey = std::string(root["access_token"]);
-      int expiresIn = root["expires_in"];
+      auto root = nlohmann::json::parse(response->bytes());
+      if (!root.contains("error")) {
+        accessKey = std::string(root["access_token"]);
+        int expiresIn = root["expires_in"];
 #endif
-      // Successfully received an auth token
-      CSPOT_LOG(info, "Access token sucessfully fetched");
-      success = true;
+        // Successfully received an auth token
+        CSPOT_LOG(info, "Access token sucessfully fetched");
+        success = true;
 
-      this->expiresAt =
-          ctx->timeProvider->getSyncedTimestamp() + (expiresIn * 1000);
-    } else {
-      CSPOT_LOG(error, "Failed to fetch access token");
-      BELL_SLEEP_MS(3000);
+        this->expiresAt =
+            ctx->timeProvider->getSyncedTimestamp() + (expiresIn * 1000);
+      } else {
+#ifdef BELL_ONLY_CJSON
+        cJSON_Delete(root);
+#endif
+        CSPOT_LOG(error, "Failed to fetch access token");
+        BELL_SLEEP_MS(3000);
+      }
+    } catch (const std::exception& e) {
+      CSPOT_LOG(error, "Failed to fetch access token: %s", e.what());
+      BELL_SLEEP_MS(1000);
     }
 
     retryCount--;
