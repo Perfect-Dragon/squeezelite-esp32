@@ -146,7 +146,8 @@ static uint32_t *grayMap;
 #define SB_HEIGHT		32
 
 // lenght are number of frames, i.e. 2 channels of 16 bits
-#define	FFT_LEN_BIT	10		
+// 4096 frames: 10.8 Hz bins at 44.1 kHz, enough to spread the bass over several bars
+#define	FFT_LEN_BIT	12
 #define	FFT_LEN		(1 << FFT_LEN_BIT)
 #define RMS_LEN_BIT	6
 #define RMS_LEN		(1 << RMS_LEN_BIT)
@@ -188,7 +189,8 @@ static struct {
 	bool enable, full;
 } artwork;
 
-#define MAX_BARS	48
+#define MAX_BARS	64
+#define LOCAL_BARS	64	// local spectrum visualizer (320 px: 4 px bars, 1 px gaps)
 #define VISU_ESP32	0x10
 static EXT_RAM_ATTR struct {
 	int bar_gap, bar_width, bar_border;
@@ -1057,6 +1059,15 @@ void visu_draw(void) {
 /****************************************************************************************
  * Update displayer
  */
+/****************************************************************************************
+ * Frame i (0 = oldest) of the latest n frames in the export ring: high 16 bits of left
+ * channel, right one is BYTES_PER_FRAME / 4 further
+ */
+static inline s16_t *visu_frame(u32_t i, u32_t n) {
+	u32_t idx = (visu_export.write + visu_export.size - n + i) % visu_export.size;
+	return (s16_t*) visu_export.buffer + idx * (BYTES_PER_FRAME / 2) + (BYTES_PER_FRAME / 4) - 1;
+}
+
 static void displayer_update(void) {
 	// no update when artwork is full screen and no led_strip (but no need to protect against not owning the display as we are playing	
 	if ((artwork.full && !led_visu.mode) || pthread_mutex_trylock(&visu_export.mutex)) {
@@ -1065,8 +1076,8 @@ static void displayer_update(void) {
 	
 	int mode = (visu.mode & ~VISU_ESP32) | led_visu.mode;
 				
-	// not enough frames
-	if (visu_export.level < (mode & VISU_SPECTRUM ? FFT_LEN : RMS_LEN) && visu_export.running) {
+	// not enough frames, or nothing new since last time
+	if ((visu_export.level < (mode & VISU_SPECTRUM ? FFT_LEN : RMS_LEN) || !visu_export.fresh) && visu_export.running) {
 		pthread_mutex_unlock(&visu_export.mutex);
 		return;
 	}
@@ -1075,42 +1086,42 @@ static void displayer_update(void) {
 	meters.levels[0] = meters.levels[1] = 0;
 	memset(meters.samples, 0, sizeof(meters.samples));	
 	
-	if (visu_export.running) {
+	bool running = visu_export.running;
+
+	if (running) {
 		
-		// calculate data for VU-meter						
+		// calculate data for VU-meter (latest RMS_LEN frames)
 		if (mode & VISU_VUMETER) {
-			s16_t *iptr = (s16_t*) visu_export.buffer + (BYTES_PER_FRAME / 4) - 1;
 			int *left = &meters.levels[0], *right = &meters.levels[1];
 			// calculate sum(L²+R²), try to not overflow at the expense of some precision
-			for (int i = RMS_LEN; --i >= 0;) {
+			for (int i = 0; i < RMS_LEN; i++) {
+				s16_t *iptr = visu_frame(i, RMS_LEN);
 				*left += (*iptr * *iptr + (1 << (RMS_LEN_BIT - 2))) >> (RMS_LEN_BIT - 1);
 				iptr += BYTES_PER_FRAME / 4;
 				*right += (*iptr * *iptr + (1 << (RMS_LEN_BIT - 2))) >> (RMS_LEN_BIT - 1);
-				iptr += BYTES_PER_FRAME / 4;
 			}	
 		}
 		
-		// calculate data for spectrum
+		// copy latest FFT_LEN frames for spectrum (windows overlap from one refresh to the next)
 		if (mode & VISU_SPECTRUM) {
-			s16_t *iptr = (s16_t*) visu_export.buffer + (BYTES_PER_FRAME / 4) - 1;
-			// on xtensa/esp32 the floating point FFT takes 1/2 cycles of the fixed point
 			for (int i = 0 ; i < FFT_LEN ; i++) {
+				s16_t *iptr = visu_frame(i, FFT_LEN);
 				// don't normalize here, but we are due INT16_MAX and FFT_LEN / 2 / 2
 				meters.samples[i * 2 + 0] = (float) (*iptr + *(iptr+BYTES_PER_FRAME/4)) * meters.hanning[i];
 				meters.samples[i * 2 + 1] = 0;
-				iptr += 2 * BYTES_PER_FRAME / 4;
 			}
-
-			// actual FFT that might be less cycle than all the crap below		
-			dsps_fft2r_fc32_ae32(meters.samples, FFT_LEN);
-			dsps_bit_rev_fc32_ansi(meters.samples, FFT_LEN);
 		}	
-		
 	} 
 		
-	// we took what we want, we can release the buffer
-	visu_export.level = 0;
+	// we took what we want, release the buffer before the FFT so that output does not skip frames
+	visu_export.fresh = 0;
 	pthread_mutex_unlock(&visu_export.mutex);
+
+	if (running && (mode & VISU_SPECTRUM)) {
+		// on xtensa/esp32 the floating point FFT takes 1/2 cycles of the fixed point
+		dsps_fft2r_fc32_ae32(meters.samples, FFT_LEN);
+		dsps_bit_rev_fc32_ansi(meters.samples, FFT_LEN);
+	}
 
 	// actualize the display
 	if (visu.mode && !artwork.full) {
@@ -1212,35 +1223,22 @@ void local_visualizer_start(void) {
     visu.rotate = false;
     visu.style = 0;
 
-	visu.bar_gap = 3;
+	visu.bar_gap = 1;
 
     // Existing spectrum code expects this in the 0.0 - 0.5 range
     visu.spectrum_scale = 0.5f;
 
-    // 20 spectrum bars
-    visu_fit(16, visu.width, visu.height);
-	
-	static const int local_band_limits[16] = {
-		73,
-		107,
-		158,
-		233,
-		343,
-		505,
-		744,
-		1096,
-		1614,
-		2377,
-		3501,
-		5157,
-		7595,
-		11188,
-		16479,
-		22050
-	};
+    visu_fit(LOCAL_BARS, visu.width, visu.height);
 
+	// Logarithmic up to 20 kHz, but each bar at least one FFT bin wide (+10% so that
+	// the int limits keep one), so the bass spreads over several bars: one bin each
+	// up to ~100 Hz instead of the same bin repeated
+	const float bin = 44100.0f / FFT_LEN;
+	float limit = 30.0f;
 	for (int i = 0; i < visu.n; i++) {
-		visu.bars[i].limit = local_band_limits[i];
+		float next = limit * powf(DISPLAY_BW / limit, 1.0f / (visu.n - i));
+		limit = next > limit + bin * 1.1f ? next : limit + bin * 1.1f;
+		visu.bars[i].limit = limit;
 	}
 
     // Reset bar state

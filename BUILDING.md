@@ -64,14 +64,15 @@ Also avoid 0, 3, 45, 46 (boot straps), 19/20 (USB), 43/44 (serial console), 47/4
 
 | Signal | GPIO |
 |---|---|
-| Display MOSI / SCLK / CS | 11 / 12 / 10 (SPI2 IOMUX pins) |
+| Display MOSI / SCLK / CS | 11 / 12 / 10 (SPI2 IOMUX pins, allow a high SPI clock) |
 | Display DC / RST / backlight | 9 / 14 / 21 |
 | PCM5102 BCK / LRCK(WS) / DIN | 4 / 5 / 6 |
 
-The display runs at 16 MHz (`speed=16000000` in `display_config`), as on the WROVER.
-40 MHz over jumper wires corrupted the picture (black screen, leftovers of old images
-after a skip). The value is stored in NVS on first boot, so on an already configured
-board change `display_config` in the web UI rather than in menuconfig.
+The display runs at 40 MHz (`speed=40000000` in `display_config`; the WROVER used 16 MHz).
+It needs solid wiring: a loose contact shows as a black screen, or leftovers of old
+images (only changed pixels are sent). Lower the speed if the wiring cannot be improved.
+The value is stored in NVS on first boot, so on an already configured board change
+`display_config` in the web UI rather than in menuconfig.
 
 ## Notes
 

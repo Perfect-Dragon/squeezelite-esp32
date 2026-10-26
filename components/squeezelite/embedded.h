@@ -92,6 +92,7 @@ void set_name(char *name);		// can be defined as an empty macro
 extern struct visu_export_s {
 	pthread_mutex_t mutex;
 	u32_t level, size, rate, gain;
+	u32_t write, fresh;		// ring: next frame written, frames added since last read
 	void *buffer;
 	bool running;
 } visu_export;
