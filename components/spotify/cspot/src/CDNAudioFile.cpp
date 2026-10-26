@@ -54,21 +54,23 @@ bool CDNAudioFile::fetchHttpRange(
     const bell::HTTPClient::ValueHeader& range, uint8_t* dst,
     size_t dstCapacity, size_t& readCapacity, const char* label,
     size_t logPosition) {
-  constexpr int HTTP_ATTEMPTS = 3;
+  constexpr int HTTP_ATTEMPTS = 5;
 
   readCapacity = 0;
 
   for (int attempt = 0; attempt < HTTP_ATTEMPTS && !this->aborted; ++attempt) {
     const std::string& cdnUrl = this->cdnUrls[this->urlIndex];
-    const bool freshConnection = !this->httpConnection;
+    bool connectFailed = false;
 
     try {
-      if (freshConnection) {
+      if (!this->httpConnection) {
         this->httpConnection =
             std::make_unique<bell::HTTPClient::Response>();
         // a failure here is retried below, possibly on another CDN host
         this->httpConnection->reconnectRetry = false;
+        connectFailed = true;
         this->httpConnection->connect(cdnUrl);
+        connectFailed = false;
       }
 
       this->httpConnection->get(cdnUrl, {range});
@@ -107,10 +109,11 @@ bool CDNAudioFile::fetchHttpRange(
       this->httpConnection.reset();
       readCapacity = 0;
 
-      // A reused keep-alive connection may just have been closed by the
-      // server, but a new one failing means this host is not answering
-      // (seen: CDN stalling several seconds on some ranges), try the next
-      if (freshConnection && this->cdnUrls.size() > 1) {
+      // Only an unreachable host is worth leaving. One that accepted the
+      // connection but is slow to answer is usually filling its cache: the
+      // end of a song it does not have yet comes only after it fetched the
+      // whole file (seen: 4-11 s), and another host would start that over.
+      if (connectFailed && this->cdnUrls.size() > 1) {
         this->urlIndex = (this->urlIndex + 1) % this->cdnUrls.size();
         CSPOT_LOG(info, "Switching to CDN host %u/%u",
                   (unsigned)this->urlIndex + 1, (unsigned)this->cdnUrls.size());

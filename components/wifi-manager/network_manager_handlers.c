@@ -674,6 +674,7 @@ static state_machine_result_t NETWORK_WIFI_CONFIGURING_ACTIVE_STATE_exit_handler
 /* Nothing else ever leaves this AP mode by itself, so a speaker that lost its
  * (phone hotspot) network, or booted before it was up, would wait here until
  * rebooted. Retry the saved networks periodically, unless someone is using the AP. */
+static int configuring_retry_deferred;
 static void network_configuring_retry_timer(network_t* nm) {
     if (network_wifi_get_known_count() > 0) {
         network_set_timer(nm->sta_polling_min_ms, "Retry saved WiFi");
@@ -681,6 +682,7 @@ static void network_configuring_retry_timer(network_t* nm) {
 }
 static state_machine_result_t WIFI_CONFIGURING_STATE_entry_handler(state_machine_t* const State_Machine) {
     network_handler_entry_print(State_Machine,true);
+    configuring_retry_deferred = 0;
     network_configuring_retry_timer((network_t *)State_Machine);
     NETWORK_EXECUTE_CB(State_Machine);
     network_handler_entry_print(State_Machine,false);
@@ -692,7 +694,8 @@ static state_machine_result_t WIFI_CONFIGURING_STATE_handler(state_machine_t* co
     state_machine_result_t result = EVENT_UN_HANDLED;
     if (State_Machine->Event == EN_TIMER) {
         wifi_sta_list_t stations = { 0 };
-        if (esp_wifi_ap_get_sta_list(&stations) == ESP_OK && stations.num > 0) {
+        // not forever: a laptop or phone that remembers this AP joins it by itself
+        if (configuring_retry_deferred++ < 4 && esp_wifi_ap_get_sta_list(&stations) == ESP_OK && stations.num > 0) {
             ESP_LOGI(TAG, "Client connected to the AP, not retrying saved WiFi now");
             network_configuring_retry_timer((network_t *)State_Machine);
             result = EVENT_HANDLED;
