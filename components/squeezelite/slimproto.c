@@ -24,6 +24,9 @@
 
 #include "squeezelite.h"
 #include "slimproto.h"
+#if EMBEDDED
+#include "sdkconfig.h"
+#endif
 
 static log_level loglevel;
 
@@ -895,6 +898,15 @@ void slimproto(log_level level, char *server, u8_t mac[6], const char *name, con
 
 	loglevel = level;
 	running = true;
+
+#if EMBEDDED && !CONFIG_LMS_ENABLE
+	// No LMS wanted (menuconfig > Audio settings): don't look for one. Discovery
+	// gives up after ~2 minutes and, unless AirPlay/Spotify is playing at that
+	// moment, squeezelite exits and the board reboots a minute later.
+	LOG_INFO("LMS disabled, only AirPlay/Spotify are available");
+	while (running) sleep(1);
+	return;
+#endif
 
 	if (server) {
 		server_addr(server, &slimproto_ip, &slimproto_port);

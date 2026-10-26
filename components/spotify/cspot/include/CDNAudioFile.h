@@ -74,7 +74,10 @@ class CDNAudioFile {
 
  private:
   const int OPUS_HEADER_SIZE = 8 * 1024;
-  const int OPUS_FOOTER_PREFFERED = 1024 * 12;  // 12K should be safe
+  // ov_open() (codecs' libvorbisidec) looks for the last page by reading from
+  // CHUNKSIZE (65535) bytes before the end, so cache all of that: otherwise
+  // opening a track costs an extra request that also evicts the read-ahead window
+  const int OPUS_FOOTER_PREFFERED = 1024 * 64;
   const int SEEK_MARGIN_SIZE = 1024 * 4;
 
   // Keep a sequential read-ahead window so normal playback does not block on

@@ -134,10 +134,13 @@ void CDNAudioFile::openStream() {
 
   this->decrypt(header.data(), OPUS_HEADER_SIZE, 0);
 
-  // Location must be dividable by 16
-  size_t footerStartLocation =
-      (this->totalFileSize - OPUS_FOOTER_PREFFERED + SPOTIFY_OPUS_HEADER) -
-      (this->totalFileSize - OPUS_FOOTER_PREFFERED + SPOTIFY_OPUS_HEADER) % 16;
+  // Location must be dividable by 16 (whole file for very short tracks)
+  size_t footerStartLocation = 0;
+  if (this->totalFileSize + SPOTIFY_OPUS_HEADER > (size_t)OPUS_FOOTER_PREFFERED) {
+    footerStartLocation =
+        (this->totalFileSize - OPUS_FOOTER_PREFFERED + SPOTIFY_OPUS_HEADER) -
+        (this->totalFileSize - OPUS_FOOTER_PREFFERED + SPOTIFY_OPUS_HEADER) % 16;
+  }
 
   this->footer = std::vector<uint8_t>(
       this->totalFileSize - footerStartLocation + SPOTIFY_OPUS_HEADER);
@@ -175,6 +178,9 @@ void CDNAudioFile::prefetch() {
 bool CDNAudioFile::fetchChunk(size_t requestPosition, size_t size) {
   size_t readCapacity = 0;
 
+  CSPOT_LOG(info, "CDN fetch pos=%u size=%u", (unsigned)requestPosition,
+            (unsigned)size);
+
   if (!fetchHttpRange(bell::HTTPClient::RangeHeader::range(
                           requestPosition, requestPosition + size - 1),
                       this->httpBuffer.data(), this->httpBuffer.size(),
@@ -194,7 +200,8 @@ size_t CDNAudioFile::readBytes(uint8_t* dst, size_t bytes) {
   size_t offsetPosition = position + SPOTIFY_OPUS_HEADER;
   size_t actualFileSize = this->totalFileSize + SPOTIFY_OPUS_HEADER;
 
-  if (position + bytes >= this->totalFileSize) {
+  // a read reaching the end is truncated below (footer), only report EOF at the end
+  if (position >= this->totalFileSize) {
     return 0;
   }
 

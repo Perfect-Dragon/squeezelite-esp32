@@ -187,6 +187,13 @@ menu "Squeezelite-ESP32"
 				Exchange left and right samples just before they are sent to the DAC
 				(not to S/PDIF or the visualizer). Needed when the DAC wiring or the
 				chip's I2S channel order comes out reversed.
+		config LMS_ENABLE
+			bool "Connect to a Logitech Media Server (LMS)"
+			default n
+			help
+				Look for and connect to an LMS server (slimproto). When off, only
+				AirPlay and Spotify are used: no discovery broadcasts, and no reboot
+				when no server is found.
 		menu "DAC settings"
 			visible if BASIC_I2C_BT
 			menu "I2S settings"
