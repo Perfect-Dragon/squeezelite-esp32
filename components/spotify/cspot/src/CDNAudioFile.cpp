@@ -1,6 +1,7 @@
 #include "CDNAudioFile.h"
 
 #include <string.h>          // for memcpy
+#include <algorithm>         // for min
 #include <functional>        // for __base
 #include <initializer_list>  // for initializer_list
 #include <map>               // for operator!=, operator==
@@ -43,6 +44,7 @@ void CDNAudioFile::seek(size_t newPos) {
 }
 
 void CDNAudioFile::rewind() {
+  this->aborted = false;
   this->enableRequestMargin = false;
   this->shortNextRequest = true;
   this->position = 0;
@@ -56,7 +58,7 @@ bool CDNAudioFile::fetchHttpRange(
 
   readCapacity = 0;
 
-  for (int attempt = 0; attempt < HTTP_ATTEMPTS; ++attempt) {
+  for (int attempt = 0; attempt < HTTP_ATTEMPTS && !this->aborted; ++attempt) {
     try {
       if (!this->httpConnection) {
         this->httpConnection =
@@ -72,11 +74,20 @@ bool CDNAudioFile::fetchHttpRange(
         throw std::runtime_error("Invalid HTTP audio range length");
       }
 
-      this->httpConnection->stream().read((char*)dst, readCapacity);
+      // On a slow link a whole range can take many seconds; read it in pieces
+      // so that a skip (abort()) does not have to wait for all of it
+      for (size_t got = 0; got < readCapacity;) {
+        if (this->aborted) {
+          throw std::runtime_error("aborted");
+        }
 
-      if (this->httpConnection->stream().gcount() !=
-          (std::streamsize)readCapacity) {
-        throw std::runtime_error("Short read of audio range body");
+        const size_t piece = std::min(readCapacity - got, (size_t)ABORT_CHECK_SIZE);
+        this->httpConnection->stream().read((char*)dst + got, piece);
+
+        if (this->httpConnection->stream().gcount() != (std::streamsize)piece) {
+          throw std::runtime_error("Short read of audio range body");
+        }
+        got += piece;
       }
 
       return true;

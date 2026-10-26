@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>   // for atomic
 #include <cstddef>  // for size_t
 #include <cstdint>  // for uint8_t
 #include <memory>   // for shared_ptr, unique_ptr
@@ -34,9 +35,16 @@ class CDNAudioFile {
   void prefetch();
 
   /**
-  * @brief Moves back to the start, keeping header, footer and read-ahead data
+  * @brief Moves back to the start, keeping header, footer and read-ahead data.
+  * Also clears abort().
   */
   void rewind();
+
+  /**
+  * @brief Makes a download in progress (on another thread) give up within one
+  * ABORT_CHECK_SIZE piece, and further reads fail, until rewind()
+  */
+  void abort() { aborted = true; }
 
   /**
   * @brief Read and decrypt part of the cdn stream
@@ -75,6 +83,8 @@ class CDNAudioFile {
   const int HTTP_BUFFER_SIZE = 1024 * 256;
   // First request after opening or seeking is smaller so decoding starts sooner
   const int HTTP_FIRST_CHUNK_SIZE = 1024 * 128;
+  // Bodies are read in pieces of this size, checking for abort() in between
+  const int ABORT_CHECK_SIZE = 1024 * 16;
   const int SPOTIFY_OPUS_HEADER = 167;
 
   // Used to store opus metadata, speeds up read
@@ -100,6 +110,7 @@ class CDNAudioFile {
   bool enableRequestMargin = false;
   bool opened = false;
   bool shortNextRequest = true;
+  std::atomic<bool> aborted = false;
 
   std::string cdnUrl;
   std::vector<uint8_t> audioKey;

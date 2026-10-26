@@ -94,6 +94,12 @@ void TrackPlayer::resetState(bool paused) {
   this->currentSongPlaying = false;
   this->startPaused = paused;
 
+  // don't wait for a download in progress to complete
+  {
+    std::scoped_lock streamLock(streamMutex);
+    if (currentTrackStream) currentTrackStream->abort();
+  }
+
   std::scoped_lock lock(dataOutMutex);
 
   CSPOT_LOG(info, "Resetting state");
@@ -180,14 +186,24 @@ void TrackPlayer::runTask() {
       // Network/TLS failures during header/footer fetch must not unwind out
       // of the FreeRTOS player task. Skip to the next track like a failed load.
       try {
-        currentTrackStream = track->getAudioFile();
+        auto stream = track->getAudioFile();
+        {
+          std::scoped_lock streamLock(streamMutex);
+          currentTrackStream = stream;
+        }
         currentTrackStream->openStream();
       } catch (const std::exception& e) {
         CSPOT_LOG(error, "Failed to open audio stream: %s", e.what());
         currentSongPlaying = false;
-        currentTrackStream = nullptr;
-        track->abandonned = true;
-        this->eofCallback();
+        {
+          std::scoped_lock streamLock(streamMutex);
+          currentTrackStream = nullptr;
+        }
+        // an open aborted by a reset is not a broken track
+        if (!pendingReset) {
+          track->abandonned = true;
+          this->eofCallback();
+        }
         continue;
       }
 
@@ -298,11 +314,15 @@ void TrackPlayer::runTask() {
       CSPOT_LOG(info, "Playing done");
 
       // always move back to LOADING (ensure proper seeking after last track has been loaded)
-      currentTrackStream = nullptr;
+      {
+        std::scoped_lock streamLock(streamMutex);
+        currentTrackStream = nullptr;
+      }
       track->loading = false;
     }
 
-    if (eof) {
+    // a reset decides what plays next (and may have cut the stream short, abort())
+    if (eof && !pendingReset) {
       if (trackQueue->isFinished()) {
         endOfQueueReached = true;
       }

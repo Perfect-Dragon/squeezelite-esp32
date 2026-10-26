@@ -64,6 +64,9 @@ class TrackPlayer : bell::Task {
   std::shared_ptr<cspot::Context> ctx;
   std::shared_ptr<cspot::TrackQueue> trackQueue;
   std::shared_ptr<cspot::CDNAudioFile> currentTrackStream;
+  // currentTrackStream is only changed by the player task, under this mutex,
+  // so that resetState() (other tasks) can abort() it safely
+  std::mutex streamMutex;
 
   std::unique_ptr<bell::WrappedSemaphore> playbackSemaphore;
 
