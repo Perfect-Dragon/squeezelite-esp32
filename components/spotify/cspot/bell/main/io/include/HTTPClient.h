@@ -69,6 +69,10 @@ class HTTPClient {
     size_t contentLength();
     size_t totalLength();
 
+    // rawRequest() reconnects and resends once when the connection dies
+    // while waiting for the headers. Callers with their own retry can disable it.
+    bool reconnectRetry = true;
+
    private:
     bell::URLParser urlParser;
     bell::SocketStream socketStream;

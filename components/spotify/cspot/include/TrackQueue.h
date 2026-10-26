@@ -92,7 +92,8 @@ class QueuedTrack {
   uint32_t pendingAudioKeyRequest = 0;
 
   std::vector<uint8_t> trackId, fileId, audioKey;
-  std::string cdnUrl;
+  // in Spotify's order of preference, the audio file moves on to the next on failure
+  std::vector<std::string> cdnUrls;
 
   std::mutex audioFileMutex;
   std::shared_ptr<cspot::CDNAudioFile> audioFile;

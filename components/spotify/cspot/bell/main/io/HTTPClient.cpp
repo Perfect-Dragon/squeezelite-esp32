@@ -91,7 +91,7 @@ void HTTPClient::Response::rawRequest(const std::string& url,
       // Only retry when the connection itself died (stale keep-alive
       // socket closed by the server); genuine protocol errors leave the
       // stream in good state and are rethrown immediately
-      if (attempt >= 1 || socketStream.good()) {
+      if (attempt >= 1 || socketStream.good() || !reconnectRetry) {
         throw;
       }
       socketStream.close();

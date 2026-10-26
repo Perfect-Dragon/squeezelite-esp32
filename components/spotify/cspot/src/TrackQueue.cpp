@@ -160,7 +160,7 @@ std::shared_ptr<cspot::CDNAudioFile> QueuedTrack::getAudioFile() {
   if (audioFile) {
     audioFile->rewind();
   } else {
-    audioFile = std::make_shared<cspot::CDNAudioFile>(cdnUrl, audioKey);
+    audioFile = std::make_shared<cspot::CDNAudioFile>(cdnUrls, audioKey);
   }
 
   return audioFile;
@@ -176,7 +176,7 @@ void QueuedTrack::preopen() {
   }
   preopenAttempted = true;
 
-  auto file = std::make_shared<cspot::CDNAudioFile>(cdnUrl, audioKey);
+  auto file = std::make_shared<cspot::CDNAudioFile>(cdnUrls, audioKey);
 
   try {
     file->prefetch();
@@ -328,17 +328,26 @@ void QueuedTrack::stepLoadCDNUrl(const std::string& accessKey) {
     // Wait for response
     std::string_view result = req->body();
 
+    cdnUrls.clear();
 #ifdef BELL_ONLY_CJSON
+    // all cJSON calls below accept NULL (unexpected reply)
     cJSON* jsonResult = cJSON_ParseWithLength(result.data(), result.size());
-    cdnUrl = cJSON_GetArrayItem(cJSON_GetObjectItem(jsonResult, "cdnurl"), 0)
-                 ->valuestring;
+    cJSON* url = NULL;
+    cJSON_ArrayForEach(url, cJSON_GetObjectItem(jsonResult, "cdnurl")) {
+      if (cJSON_IsString(url)) cdnUrls.push_back(url->valuestring);
+    }
     cJSON_Delete(jsonResult);
 #else
     auto jsonResult = nlohmann::json::parse(result);
-    cdnUrl = jsonResult["cdnurl"][0];
+    cdnUrls = jsonResult["cdnurl"].get<std::vector<std::string>>();
 #endif
 
-    CSPOT_LOG(info, "Received CDN URL, %s", cdnUrl.c_str());
+    if (cdnUrls.empty()) {
+      throw std::runtime_error("No CDN URL in reply");
+    }
+
+    CSPOT_LOG(info, "Received CDN URL (1/%u), %s", (unsigned)cdnUrls.size(),
+              cdnUrls[0].c_str());
     state = State::READY;
     loadedSemaphore->give();
   } catch (...) {

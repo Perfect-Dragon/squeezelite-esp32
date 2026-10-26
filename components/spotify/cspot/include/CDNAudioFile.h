@@ -20,7 +20,8 @@ class AccessKeyFetcher;
 class CDNAudioFile {
 
  public:
-  CDNAudioFile(const std::string& cdnUrl, const std::vector<uint8_t>& audioKey);
+  CDNAudioFile(const std::vector<std::string>& cdnUrls,
+               const std::vector<uint8_t>& audioKey);
 
   /**
   * @brief Opens connection to the provided cdn url, and fetches track metadata.
@@ -115,7 +116,9 @@ class CDNAudioFile {
   bool shortNextRequest = true;
   std::atomic<bool> aborted = false;
 
-  std::string cdnUrl;
+  // alternative CDN hosts for the same file, cdnUrls[urlIndex] is in use
+  std::vector<std::string> cdnUrls;
+  size_t urlIndex = 0;
   std::vector<uint8_t> audioKey;
 
   bool fetchHttpRange(const bell::HTTPClient::ValueHeader& range,

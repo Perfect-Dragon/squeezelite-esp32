@@ -58,6 +58,8 @@ case "$1" in
         # SPOTIFY_SECRET is only read when CMake configures, so reconfigure while it is set
         RECONF=""
         [ -n "$SPOTIFY_SECRET" ] && RECONF="reconfigure"
+        # the "Compile time" printed at boot is only refreshed when this file is rebuilt
+        rm -f $BUILD/esp-idf/app_update/CMakeFiles/__idf_app_update.dir/esp_app_desc.c.obj
         CMD="$IDF_BUILD $RECONF build && ESPPORT=$PORT ESPBAUD=460800 ninja -C $BUILD squeezelite-flash \
              && python \$IDF_PATH/components/app_update/otatool.py --port $PORT switch_ota_partition --slot 0"
         ;;
