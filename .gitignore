@@ -24,3 +24,6 @@ log.squeezelite.*.txt
 
 build-wrover/
 build-s3/
+
+# personal notes, not for GitHub
+Handoff.md
