@@ -247,19 +247,26 @@ void QueuedTrack::stepParseMetadata(Track* pbTrack, Episode* pbEpisode) {
     }
   }
 
-  // Find playable file
+  // Find playable file: the requested Vorbis bitrate, else the best one below it
+  // (a track without 320 plays at 160, not 96), else the lowest one above it
+  int best = -1;
   for (int x = 0; x < filesCount; x++) {
-    CSPOT_LOG(debug, "File format: %d", selectedFiles[x].format);
-    if (selectedFiles[x].format == ctx->config.audioFormat) {
-      fileId = pbArrayToVector(selectedFiles[x].file_id);
-      break;  // If file found stop searching
-    }
-
-    // Fallback to OGG Vorbis 96kbps
-    if (fileId.size() == 0 &&
-        selectedFiles[x].format == AudioFormat_OGG_VORBIS_96) {
-      fileId = pbArrayToVector(selectedFiles[x].file_id);
-    }
+    int format = selectedFiles[x].format;
+    CSPOT_LOG(debug, "File format: %d", format);
+    if (format < AudioFormat_OGG_VORBIS_96 || format > AudioFormat_OGG_VORBIS_320)
+      continue;
+    int current = best < 0 ? -1 : selectedFiles[best].format;
+    bool better =
+        best < 0 ||
+        (format <= ctx->config.audioFormat
+             ? current > ctx->config.audioFormat || format > current
+             : current > ctx->config.audioFormat && format < current);
+    if (better) best = x;
+  }
+  if (best >= 0) {
+    fileId = pbArrayToVector(selectedFiles[best].file_id);
+    CSPOT_LOG(info, "Playing format %d (requested %d)",
+              selectedFiles[best].format, ctx->config.audioFormat);
   }
 
   // No viable files found for playback
