@@ -57,20 +57,33 @@ Contains the freeRTOS task for the DNS server that processes the requests.
 
 static const char TAG[] = "dns_server";
 static TaskHandle_t task_dns_server = NULL;
-int socket_fd;
+static volatile bool dns_stop_requested = false;
+static int socket_fd = -1;
 
 void  dns_server_start(esp_netif_t * netif) {
     if (task_dns_server) { ESP_LOGW(TAG, "DNS server already running"); return; }
-    xTaskCreate(&dns_server, "dns_server", 3072, (void *)netif, WIFI_MANAGER_TASK_PRIORITY-1, &task_dns_server);
+    dns_stop_requested = false;
+    if (xTaskCreate(&dns_server, "dns_server", 3072, (void *)netif, WIFI_MANAGER_TASK_PRIORITY-1, &task_dns_server) != pdPASS) {
+        ESP_LOGE(TAG, "Cannot create DNS server task");
+        task_dns_server = NULL;
+    }
 }
 
+/* Never vTaskDelete() the server from outside: it is blocked in recvfrom(), and lwIP
+ * only frees a socket slot once every call using it has returned. Killing the task
+ * mid-call leaks the slot for good, even after close(). Ask it to stop instead; its
+ * recvfrom() times out every 500 ms, then it closes its own socket and exits. */
 void  dns_server_stop(){
-	if(task_dns_server){
-		vTaskDelete(task_dns_server);
-		task_dns_server = NULL;
-        if (socket_fd >= 0) { close(socket_fd); socket_fd = -1; }
-	}
+    if (!task_dns_server) return;
+    dns_stop_requested = true;
+    for (int i = 0; i < 40 && task_dns_server; i++) vTaskDelay(pdMS_TO_TICKS(50));
+    if (task_dns_server) ESP_LOGE(TAG, "DNS server task did not stop");
+}
 
+static void dns_server_exit(void) {
+    if (socket_fd >= 0) { close(socket_fd); socket_fd = -1; }
+    task_dns_server = NULL;
+    vTaskDelete(NULL);
 }
 
 
@@ -86,10 +99,8 @@ void  dns_server(void *pvParameters) {
     /* Create UDP socket */
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0){
-        ESP_LOGE(TAG, "Failed to create socket");
         ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
-        task_dns_server = NULL;
-        vTaskDelete(NULL);
+        dns_server_exit();
     }
     memset(&sa, 0, sizeof(struct sockaddr_in));
 
@@ -98,20 +109,19 @@ void  dns_server(void *pvParameters) {
     esp_err = esp_netif_get_ip_info(netif,&ip_info);
     if(esp_err!=ESP_OK)    {
         ESP_LOGE(TAG, "Failed to get adapter info for udp: %s", esp_err_to_name(esp_err));
-        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
-        task_dns_server = NULL;
-        vTaskDelete(NULL);
+        dns_server_exit();
     }
     ra.sin_family = AF_INET;
     ra.sin_addr.s_addr = ip_info.ip.addr;
     ra.sin_port = htons(53);
     if (bind(socket_fd, (struct sockaddr *)&ra, sizeof(struct sockaddr_in)) == -1) {
-        ESP_LOGE(TAG, "Failed to bind to 53/udp");
-        close(socket_fd);
-        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
-        task_dns_server = NULL;
-        vTaskDelete(NULL);
+        ESP_LOGE(TAG, "Failed to bind to 53/udp: errno %d", errno);
+        dns_server_exit();
     }
+
+    /* wake up regularly so dns_server_stop() is noticed */
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     struct sockaddr_in client;
     socklen_t client_len;
@@ -126,9 +136,10 @@ void  dns_server(void *pvParameters) {
     ESP_LOGI(TAG, "DNS Server listening on 53/udp");
 
     /* Start loop to process DNS requests */
-    for(;;) {
+    while (!dns_stop_requested) {
 
     	memset(data, 0x00,  sizeof(data)); /* reset buffer */
+        client_len = sizeof(client);
         length = recvfrom(socket_fd, data, sizeof(data), 0, (struct sockaddr *)&client, &client_len); /* read udp request */
 
         /*if the query is bigger than the buffer size we simply ignore it. This case should only happen in case of multiple
@@ -182,9 +193,9 @@ void  dns_server(void *pvParameters) {
         taskYIELD(); /* allows the freeRTOS scheduler to take over if needed. DNS daemon should not be taxing on the system */
 
     }
-    close(socket_fd);
 
-    vTaskDelete ( NULL );
+    ESP_LOGI(TAG, "DNS Server stopped");
+    dns_server_exit();
 }
 
 
