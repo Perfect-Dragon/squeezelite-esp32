@@ -60,14 +60,15 @@ static TaskHandle_t task_dns_server = NULL;
 int socket_fd;
 
 void  dns_server_start(esp_netif_t * netif) {
+    if (task_dns_server) { ESP_LOGW(TAG, "DNS server already running"); return; }
     xTaskCreate(&dns_server, "dns_server", 3072, (void *)netif, WIFI_MANAGER_TASK_PRIORITY-1, &task_dns_server);
 }
 
 void  dns_server_stop(){
 	if(task_dns_server){
 		vTaskDelete(task_dns_server);
-		close(socket_fd);
 		task_dns_server = NULL;
+        if (socket_fd >= 0) { close(socket_fd); socket_fd = -1; }
 	}
 
 }
@@ -86,7 +87,9 @@ void  dns_server(void *pvParameters) {
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0){
         ESP_LOGE(TAG, "Failed to create socket");
-        exit(0);
+        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+        task_dns_server = NULL;
+        vTaskDelete(NULL);
     }
     memset(&sa, 0, sizeof(struct sockaddr_in));
 
@@ -95,7 +98,9 @@ void  dns_server(void *pvParameters) {
     esp_err = esp_netif_get_ip_info(netif,&ip_info);
     if(esp_err!=ESP_OK)    {
         ESP_LOGE(TAG, "Failed to get adapter info for udp: %s", esp_err_to_name(esp_err));
-        exit(1);
+        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+        task_dns_server = NULL;
+        vTaskDelete(NULL);
     }
     ra.sin_family = AF_INET;
     ra.sin_addr.s_addr = ip_info.ip.addr;
@@ -103,7 +108,9 @@ void  dns_server(void *pvParameters) {
     if (bind(socket_fd, (struct sockaddr *)&ra, sizeof(struct sockaddr_in)) == -1) {
         ESP_LOGE(TAG, "Failed to bind to 53/udp");
         close(socket_fd);
-        exit(1);
+        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+        task_dns_server = NULL;
+        vTaskDelete(NULL);
     }
 
     struct sockaddr_in client;
